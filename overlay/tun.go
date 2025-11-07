@@ -26,11 +26,11 @@ func NewDeviceFromConfig(c *config.C, l *logrus.Logger, vpnNetworks []netip.Pref
 	}
 }
 
-func NewFdDeviceFromConfig(fd *int) DeviceFactory {
-	return func(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, routines int) (Device, error) {
-		return newTunFromFd(c, l, *fd, vpnNetworks)
-	}
-}
+//func NewFdDeviceFromConfig(fd *int) DeviceFactory {
+//	return func(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, routines int) (Device, error) {
+//		return newTunFromFd(c, l, *fd, vpnNetworks)
+//	}
+//}
 
 func getAllRoutesFromConfig(c *config.C, vpnNetworks []netip.Prefix, initial bool) (bool, []Route, error) {
 	if !initial && !c.HasChanged("tun.routes") && !c.HasChanged("tun.unsafe_routes") {

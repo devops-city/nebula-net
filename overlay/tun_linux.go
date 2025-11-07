@@ -11,10 +11,14 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
 	"github.com/gaissmai/bart"
+	"github.com/hetznercloud/virtio-go/tuntap"
+	"github.com/hetznercloud/virtio-go/vhostnet"
+	"github.com/hetznercloud/virtio-go/virtio"
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
 	"github.com/slackhq/nebula/routing"
@@ -24,8 +28,8 @@ import (
 )
 
 type tun struct {
-	io.ReadWriteCloser
-	fd          int
+	dev         *tuntap.Device
+	vdev        *vhostnet.Device
 	Device      string
 	vpnNetworks []netip.Prefix
 	MaxMTU      int
@@ -65,68 +69,87 @@ type ifreqQLEN struct {
 	pad   [8]byte
 }
 
-func newTunFromFd(c *config.C, l *logrus.Logger, deviceFd int, vpnNetworks []netip.Prefix) (*tun, error) {
-	file := os.NewFile(uintptr(deviceFd), "/dev/net/tun")
-
-	t, err := newTunGeneric(c, l, file, vpnNetworks)
-	if err != nil {
-		return nil, err
-	}
-
-	t.Device = "tun0"
-
-	return t, nil
-}
+//func newTunFromFd(c *config.C, l *logrus.Logger, deviceFd int, vpnNetworks []netip.Prefix) (*tun, error) {
+//	file := os.NewFile(uintptr(deviceFd), "/dev/net/tun")
+//
+//	t, err := newTunGeneric(c, l, file, vpnNetworks)
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	t.Device = "tun0"
+//
+//	return t, nil
+//}
 
 func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueue bool) (*tun, error) {
-	fd, err := unix.Open("/dev/net/tun", os.O_RDWR, 0)
+	//fd, err := unix.Open("/dev/net/tun", os.O_RDWR, 0)
+	//if err != nil {
+	//	// If /dev/net/tun doesn't exist, try to create it (will happen in docker)
+	//	if os.IsNotExist(err) {
+	//		err = os.MkdirAll("/dev/net", 0755)
+	//		if err != nil {
+	//			return nil, fmt.Errorf("/dev/net/tun doesn't exist, failed to mkdir -p /dev/net: %w", err)
+	//		}
+	//		err = unix.Mknod("/dev/net/tun", unix.S_IFCHR|0600, int(unix.Mkdev(10, 200)))
+	//		if err != nil {
+	//			return nil, fmt.Errorf("failed to create /dev/net/tun: %w", err)
+	//		}
+	//
+	//		fd, err = unix.Open("/dev/net/tun", os.O_RDWR, 0)
+	//		if err != nil {
+	//			return nil, fmt.Errorf("created /dev/net/tun, but still failed: %w", err)
+	//		}
+	//	} else {
+	//		return nil, err
+	//	}
+	//}
+	//
+	//var req ifReq
+	//req.Flags = uint16(unix.IFF_TUN | unix.IFF_NO_PI)
+	//if multiqueue {
+	//	req.Flags |= unix.IFF_MULTI_QUEUE
+	//}
+	//copy(req.Name[:], c.GetString("tun.dev", ""))
+	//if err = ioctl(uintptr(fd), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&req))); err != nil {
+	//	return nil, err
+	//}
+	//name := strings.Trim(string(req.Name[:]), "\x00")
+	//
+	//file := os.NewFile(uintptr(fd), "/dev/net/tun")
+
+	name := strings.Trim(c.GetString("tun.dev", ""), "\x00")
+	tundev, err := tuntap.NewDevice(
+		tuntap.WithName(name),
+		tuntap.WithDeviceType(tuntap.DeviceTypeTUN),
+		tuntap.WithVirtioNetHdr(true),
+		tuntap.WithOffloads(0x0), //todo
+	)
 	if err != nil {
-		// If /dev/net/tun doesn't exist, try to create it (will happen in docker)
-		if os.IsNotExist(err) {
-			err = os.MkdirAll("/dev/net", 0755)
-			if err != nil {
-				return nil, fmt.Errorf("/dev/net/tun doesn't exist, failed to mkdir -p /dev/net: %w", err)
-			}
-			err = unix.Mknod("/dev/net/tun", unix.S_IFCHR|0600, int(unix.Mkdev(10, 200)))
-			if err != nil {
-				return nil, fmt.Errorf("failed to create /dev/net/tun: %w", err)
-			}
-
-			fd, err = unix.Open("/dev/net/tun", os.O_RDWR, 0)
-			if err != nil {
-				return nil, fmt.Errorf("created /dev/net/tun, but still failed: %w", err)
-			}
-		} else {
-			return nil, err
-		}
-	}
-
-	var req ifReq
-	req.Flags = uint16(unix.IFF_TUN | unix.IFF_NO_PI)
-	if multiqueue {
-		req.Flags |= unix.IFF_MULTI_QUEUE
-	}
-	copy(req.Name[:], c.GetString("tun.dev", ""))
-	if err = ioctl(uintptr(fd), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&req))); err != nil {
 		return nil, err
 	}
-	name := strings.Trim(string(req.Name[:]), "\x00")
 
-	file := os.NewFile(uintptr(fd), "/dev/net/tun")
-	t, err := newTunGeneric(c, l, file, vpnNetworks)
+	t, err := newTunGeneric(c, l, tundev.File(), vpnNetworks)
 	if err != nil {
 		return nil, err
 	}
-
+	t.dev = tundev
 	t.Device = name
+
+	vdev, err := vhostnet.NewDevice(
+		vhostnet.WithBackendDevice(tundev),
+		vhostnet.WithQueueSize(8), //todo config
+	)
+	if err != nil {
+		return nil, err
+	}
+	t.vdev = vdev
 
 	return t, nil
 }
 
 func newTunGeneric(c *config.C, l *logrus.Logger, file *os.File, vpnNetworks []netip.Prefix) (*tun, error) {
 	t := &tun{
-		ReadWriteCloser:           file,
-		fd:                        int(file.Fd()),
 		vpnNetworks:               vpnNetworks,
 		TXQueueLen:                c.GetInt("tun.tx_queue", 500),
 		useSystemRoutes:           c.GetBool("tun.use_system_route_table", false),
@@ -217,21 +240,22 @@ func (t *tun) reload(c *config.C, initial bool) error {
 }
 
 func (t *tun) NewMultiQueueReader() (io.ReadWriteCloser, error) {
-	fd, err := unix.Open("/dev/net/tun", os.O_RDWR, 0)
-	if err != nil {
-		return nil, err
-	}
+	//fd, err := unix.Open("/dev/net/tun", os.O_RDWR, 0)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//
+	//var req ifReq
+	//req.Flags = uint16(unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_MULTI_QUEUE)
+	//copy(req.Name[:], t.Device)
+	//if err = ioctl(uintptr(fd), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&req))); err != nil {
+	//	return nil, err
+	//}
+	//
+	//file := os.NewFile(uintptr(fd), "/dev/net/tun")
 
-	var req ifReq
-	req.Flags = uint16(unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_MULTI_QUEUE)
-	copy(req.Name[:], t.Device)
-	if err = ioctl(uintptr(fd), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&req))); err != nil {
-		return nil, err
-	}
-
-	file := os.NewFile(uintptr(fd), "/dev/net/tun")
-
-	return file, nil
+	//return file, nil
+	return nil, syscall.ENOTSUP
 }
 
 func (t *tun) RoutesFor(ip netip.Addr) routing.Gateways {
@@ -239,27 +263,33 @@ func (t *tun) RoutesFor(ip netip.Addr) routing.Gateways {
 	return r
 }
 
+func (t *tun) Read(p []byte) (int, error) {
+	_, out, err := t.vdev.ReceivePacket()
+	if err != nil {
+		return 0, err
+	}
+	p = p[:len(out)]
+	copy(p, out)
+	return len(out), nil
+}
+
 func (t *tun) Write(b []byte) (int, error) {
-	var nn int
 	maximum := len(b)
 
-	for {
-		n, err := unix.Write(t.fd, b[nn:maximum])
-		if n > 0 {
-			nn += n
-		}
-		if nn == len(b) {
-			return nn, err
-		}
-
-		if err != nil {
-			return nn, err
-		}
-
-		if n == 0 {
-			return nn, io.ErrUnexpectedEOF
-		}
+	hdr := virtio.NetHdr{ //todo
+		Flags:      0,
+		GSOType:    0,
+		HdrLen:     0,
+		GSOSize:    0,
+		CsumStart:  0,
+		CsumOffset: 0,
+		NumBuffers: 0,
 	}
+	err := t.vdev.TransmitPacket(hdr, b)
+	if err != nil {
+		return 0, err
+	}
+	return maximum, nil
 }
 
 func (t *tun) deviceBytes() (o [16]byte) {
@@ -674,8 +704,12 @@ func (t *tun) Close() error {
 		close(t.routeChan)
 	}
 
-	if t.ReadWriteCloser != nil {
-		_ = t.ReadWriteCloser.Close()
+	if t.vdev != nil {
+		_ = t.vdev.Close()
+	}
+
+	if t.dev != nil {
+		_ = t.dev.Close()
 	}
 
 	if t.ioctlFd > 0 {
