@@ -16,11 +16,11 @@ import (
 	"unsafe"
 
 	"github.com/gaissmai/bart"
-	"github.com/hetznercloud/virtio-go/tuntap"
-	"github.com/hetznercloud/virtio-go/vhostnet"
 	"github.com/hetznercloud/virtio-go/virtio"
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
+	"github.com/slackhq/nebula/overlay/tuntap"
+	"github.com/slackhq/nebula/overlay/vhostnet"
 	"github.com/slackhq/nebula/routing"
 	"github.com/slackhq/nebula/util"
 	"github.com/vishvananda/netlink"
@@ -121,9 +121,9 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 	name := strings.Trim(c.GetString("tun.dev", ""), "\x00")
 	tundev, err := tuntap.NewDevice(
 		tuntap.WithName(name),
-		tuntap.WithDeviceType(tuntap.DeviceTypeTUN),
-		tuntap.WithVirtioNetHdr(true),
-		tuntap.WithOffloads(0x0), //todo
+		tuntap.WithDeviceType(tuntap.DeviceTypeTUN),                          //todo wtf
+		tuntap.WithVirtioNetHdr(true),                                        //todo hmm
+		tuntap.WithOffloads(unix.TUN_F_CSUM|unix.TUN_F_USO4|unix.TUN_F_USO6), //todo
 	)
 	if err != nil {
 		return nil, err
@@ -137,7 +137,7 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 	t.Device = name
 
 	vdev, err := vhostnet.NewDevice(
-		vhostnet.WithBackendDevice(tundev),
+		vhostnet.WithBackendFD(int(tundev.File().Fd())),
 		vhostnet.WithQueueSize(8), //todo config
 	)
 	if err != nil {
@@ -264,9 +264,12 @@ func (t *tun) RoutesFor(ip netip.Addr) routing.Gateways {
 }
 
 func (t *tun) Read(p []byte) (int, error) {
-	_, out, err := t.vdev.ReceivePacket()
+	hdr, out, err := t.vdev.ReceivePacket()
 	if err != nil {
 		return 0, err
+	}
+	if hdr.NumBuffers == 0 {
+
 	}
 	p = p[:len(out)]
 	copy(p, out)
@@ -278,14 +281,18 @@ func (t *tun) Write(b []byte) (int, error) {
 
 	hdr := virtio.NetHdr{ //todo
 		Flags:      0,
-		GSOType:    0,
+		GSOType:    unix.VIRTIO_NET_HDR_GSO_NONE,
 		HdrLen:     0,
 		GSOSize:    0,
 		CsumStart:  0,
 		CsumOffset: 0,
 		NumBuffers: 0,
 	}
+	//todo wow fuck this
+	//bb := make([]byte, maximum+14)
+	//copy(bb[14:], b)
 	err := t.vdev.TransmitPacket(hdr, b)
+	//err := t.vdev.TransmitPacket2(b)
 	if err != nil {
 		return 0, err
 	}
