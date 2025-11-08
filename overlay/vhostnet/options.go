@@ -3,8 +3,7 @@ package vhostnet
 import (
 	"errors"
 
-	"github.com/hetznercloud/virtio-go/tuntap"
-	"github.com/hetznercloud/virtio-go/virtqueue"
+	"github.com/slackhq/nebula/overlay/virtqueue"
 )
 
 type optionValues struct {
@@ -60,11 +59,11 @@ func WithBackendFD(backendFD int) Option {
 	return func(o *optionValues) { o.backendFD = backendFD }
 }
 
-// WithBackendDevice returns an [Option] that sets the given TAP device as the
-// backend that will be used for the queues of the device. The device will
-// write and read packets to/from that backend. The TAP device should have been
-// created with the [tuntap.WithVirtioNetHdr] option enabled.
-// Either this or [WithBackendFD] is required.
-func WithBackendDevice(dev *tuntap.Device) Option {
-	return func(o *optionValues) { o.backendFD = int(dev.File().Fd()) }
-}
+//// WithBackendDevice returns an [Option] that sets the given TAP device as the
+//// backend that will be used for the queues of the device. The device will
+//// write and read packets to/from that backend. The TAP device should have been
+//// created with the [tuntap.WithVirtioNetHdr] option enabled.
+//// Either this or [WithBackendFD] is required.
+//func WithBackendDevice(dev *tuntap.Device) Option {
+//	return func(o *optionValues) { o.backendFD = int(dev.File().Fd()) }
+//}

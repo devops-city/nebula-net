@@ -6,9 +6,9 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/hetznercloud/virtio-go/vhost"
-	"github.com/hetznercloud/virtio-go/virtio"
-	"github.com/hetznercloud/virtio-go/virtqueue"
+	"github.com/slackhq/nebula/overlay/vhost"
+	"github.com/slackhq/nebula/overlay/virtio"
+	"github.com/slackhq/nebula/overlay/virtqueue"
 	"golang.org/x/sys/unix"
 )
 

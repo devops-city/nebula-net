@@ -16,10 +16,10 @@ import (
 	"unsafe"
 
 	"github.com/gaissmai/bart"
-	"github.com/hetznercloud/virtio-go/virtio"
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
 	"github.com/slackhq/nebula/overlay/vhostnet"
+	"github.com/slackhq/nebula/overlay/virtio"
 	"github.com/slackhq/nebula/routing"
 	"github.com/slackhq/nebula/util"
 	"github.com/vishvananda/netlink"
@@ -279,39 +279,6 @@ func (t *tun) NewMultiQueueReader() (io.ReadWriteCloser, error) {
 func (t *tun) RoutesFor(ip netip.Addr) routing.Gateways {
 	r, _ := t.routeTree.Load().Lookup(ip)
 	return r
-}
-
-func (t *tun) Read(p []byte) (int, error) {
-	hdr, out, err := t.vdev.ReceivePacket() //we are TXing
-	if err != nil {
-		return 0, err
-	}
-	if hdr.NumBuffers == 0 {
-
-	}
-	p = p[:len(out)]
-	copy(p, out)
-	return len(out), nil
-}
-
-func (t *tun) Write(b []byte) (int, error) {
-	maximum := len(b) //we are RXing
-
-	hdr := virtio.NetHdr{ //todo
-		Flags:      unix.VIRTIO_NET_HDR_F_DATA_VALID,
-		GSOType:    unix.VIRTIO_NET_HDR_GSO_NONE,
-		HdrLen:     0,
-		GSOSize:    0,
-		CsumStart:  0,
-		CsumOffset: 0,
-		NumBuffers: 0,
-	}
-
-	err := t.vdev.TransmitPacket(hdr, b)
-	if err != nil {
-		return 0, err
-	}
-	return maximum, nil
 }
 
 func (t *tun) deviceBytes() (o [16]byte) {
@@ -739,4 +706,37 @@ func (t *tun) Close() error {
 	}
 
 	return nil
+}
+
+func (t *tun) Read(p []byte) (int, error) {
+	hdr, out, err := t.vdev.ReceivePacket() //we are TXing
+	if err != nil {
+		return 0, err
+	}
+	if hdr.NumBuffers > 1 {
+		t.l.WithField("num_buffers", hdr.NumBuffers).Info("wow, lots to TX from tun")
+	}
+	p = p[:len(out)]
+	copy(p, out)
+	return len(out), nil
+}
+
+func (t *tun) Write(b []byte) (int, error) {
+	maximum := len(b) //we are RXing
+
+	hdr := virtio.NetHdr{ //todo
+		Flags:      unix.VIRTIO_NET_HDR_F_DATA_VALID,
+		GSOType:    unix.VIRTIO_NET_HDR_GSO_NONE,
+		HdrLen:     0,
+		GSOSize:    0,
+		CsumStart:  0,
+		CsumOffset: 0,
+		NumBuffers: 0,
+	}
+
+	err := t.vdev.TransmitPacket(hdr, b)
+	if err != nil {
+		return 0, err
+	}
+	return maximum, nil
 }

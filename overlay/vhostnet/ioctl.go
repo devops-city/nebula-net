@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/hetznercloud/virtio-go/vhost"
+	"github.com/slackhq/nebula/overlay/vhost"
 )
 
 const (
