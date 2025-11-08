@@ -50,7 +50,8 @@ type Device struct {
 //   - [WithBackendDevice]
 //
 // Remember to call [Device.Close] after use to free up resources.
-func NewDevice(options ...Option) (_ *Device, err error) {
+func NewDevice(options ...Option) (*Device, error) {
+	var err error
 	opts := optionDefaults
 	opts.apply(options)
 	if err = opts.validate(); err != nil {

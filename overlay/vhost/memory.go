@@ -3,7 +3,6 @@ package vhost
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
 	"unsafe"
 
 	"github.com/slackhq/nebula/overlay/virtqueue"
@@ -33,15 +32,14 @@ type MemoryLayout []MemoryRegion
 // NewMemoryLayoutForQueues returns a new [MemoryLayout] that describes the
 // memory pages used by the descriptor tables of the given queues.
 func NewMemoryLayoutForQueues(queues []*virtqueue.SplitQueue) MemoryLayout {
-	pageSize := os.Getpagesize()
 	regions := make([]MemoryRegion, 0)
 	for _, queue := range queues {
-		for _, address := range queue.DescriptorTable().BufferAddresses() {
+		for address, size := range queue.DescriptorTable().BufferAddresses() {
 			regions = append(regions, MemoryRegion{
 				// There is no virtualization in play here, so the guest address
 				// is the same as in the host's userspace.
 				GuestPhysicalAddress: address,
-				Size:                 uint64(pageSize),
+				Size:                 uint64(size),
 				UserspaceAddress:     address,
 			})
 		}

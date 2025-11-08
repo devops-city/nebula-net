@@ -154,7 +154,7 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 
 	vdev, err := vhostnet.NewDevice(
 		vhostnet.WithBackendFD(fd),
-		vhostnet.WithQueueSize(16), //todo config
+		vhostnet.WithQueueSize(8192), //todo config
 	)
 	if err != nil {
 		return nil, err
