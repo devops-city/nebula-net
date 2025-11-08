@@ -80,7 +80,9 @@ func NewDevice(options ...Option) (_ *Device, err error) {
 
 	// Advertise the supported features. This isn't much for now.
 	// TODO: Add feature options and implement proper feature negotiation.
-	features := virtio.FeatureVersion1 // | virtio.FeatureNetMergeRXBuffers
+	//const funky = virtio.Feature(1 << 27)
+	//features := virtio.FeatureVersion1 | funky // | todo virtio.FeatureNetMergeRXBuffers
+	features := virtio.FeatureVersion1 | virtio.FeatureNetMergeRXBuffers
 	if err = vhost.SetFeatures(dev.controlFD, features); err != nil {
 		return nil, fmt.Errorf("set features: %w", err)
 	}
@@ -173,11 +175,12 @@ func (dev *Device) monitorTransmitQueue() {
 // transmitted and the device notifies that it has used the packet buffer.
 func (dev *Device) TransmitPacket(vnethdr virtio.NetHdr, packet []byte) error {
 	// Prepend the packet with its virtio-net header.
-	vnethdrBuf := make([]byte, virtio.NetHdrSize) //todo WHY
+	vnethdrBuf := make([]byte, virtio.NetHdrSize+14) //todo WHY
 	if err := vnethdr.Encode(vnethdrBuf); err != nil {
 		return fmt.Errorf("encode vnethdr: %w", err)
 	}
 	outBuffers := [][]byte{vnethdrBuf, packet}
+	//outBuffers := [][]byte{packet}
 
 	chainIndex, err := dev.transmitQueue.OfferDescriptorChain(outBuffers, 0, true)
 	if err != nil {
