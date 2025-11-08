@@ -48,6 +48,7 @@ type SplitQueue struct {
 	// [SplitQueue.OfferDescriptorChain].
 	offerMutex sync.Mutex
 	pageSize   int
+	itemSize   int
 }
 
 // NewSplitQueue allocates a new [SplitQueue] in memory. The given queue size
@@ -61,6 +62,7 @@ func NewSplitQueue(queueSize int) (_ *SplitQueue, err error) {
 	sq := SplitQueue{
 		size:     queueSize,
 		pageSize: os.Getpagesize(),
+		itemSize: os.Getpagesize(), //todo config
 	}
 
 	// Clean up a partially initialized queue when something fails.
@@ -109,7 +111,7 @@ func NewSplitQueue(queueSize int) (_ *SplitQueue, err error) {
 		return nil, fmt.Errorf("allocate virtqueue buffer: %w", err)
 	}
 
-	sq.descriptorTable = newDescriptorTable(queueSize, sq.buf[descriptorTableStart:descriptorTableEnd])
+	sq.descriptorTable = newDescriptorTable(queueSize, sq.buf[descriptorTableStart:descriptorTableEnd], sq.itemSize)
 	sq.availableRing = newAvailableRing(queueSize, sq.buf[availableRingStart:availableRingEnd])
 	sq.usedRing = newUsedRing(queueSize, sq.buf[usedRingStart:usedRingEnd])
 
@@ -241,6 +243,12 @@ func (sq *SplitQueue) consumeUsedRing(ctx context.Context) error {
 	return nil
 }
 
+// blockForMoreDescriptors blocks on a channel waiting for more descriptors to free up.
+// it is its own function so maybe it might show up in pprof
+func (sq *SplitQueue) blockForMoreDescriptors() {
+	<-sq.moreFreeDescriptors
+}
+
 // OfferDescriptorChain offers a descriptor chain to the device which contains a
 // number of device-readable buffers (out buffers) and device-writable buffers
 // (in buffers).
@@ -292,12 +300,19 @@ func (sq *SplitQueue) OfferDescriptorChain(outBuffers [][]byte, numInBuffers int
 		if err == nil {
 			break
 		}
-		if waitFree && errors.Is(err, ErrNotEnoughFreeDescriptors) {
-			// Wait for more free descriptors to be put back into the queue.
-			// If the number of free descriptors is still not sufficient, we'll
-			// land here again.
-			<-sq.moreFreeDescriptors
-			continue
+
+		// I don't wanna use errors.Is, it's slow
+		//goland:noinspection GoDirectComparisonOfErrors
+		if err == ErrNotEnoughFreeDescriptors {
+			if waitFree {
+				// Wait for more free descriptors to be put back into the queue.
+				// If the number of free descriptors is still not sufficient, we'll
+				// land here again.
+				sq.blockForMoreDescriptors()
+				continue
+			} else {
+				return 0, err
+			}
 		}
 		return 0, fmt.Errorf("create descriptor chain: %w", err)
 	}
@@ -340,6 +355,7 @@ func (sq *SplitQueue) GetDescriptorChain(head uint16) (outBuffers, inBuffers [][
 func (sq *SplitQueue) FreeDescriptorChain(head uint16) error {
 	sq.ensureInitialized()
 
+	//not called under lock
 	if err := sq.descriptorTable.freeDescriptorChain(head); err != nil {
 		return fmt.Errorf("free: %w", err)
 	}

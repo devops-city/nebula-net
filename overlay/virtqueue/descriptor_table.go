@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"sync"
 	"unsafe"
 
@@ -54,6 +53,7 @@ type DescriptorTable struct {
 
 	bufferBase uintptr
 	bufferSize int
+	itemSize   int
 
 	mu sync.Mutex
 }
@@ -63,7 +63,7 @@ type DescriptorTable struct {
 // descriptor table (see [descriptorTableSize]) for the given queue size.
 //
 // Before this descriptor table can be used, [initialize] must be called.
-func newDescriptorTable(queueSize int, mem []byte) *DescriptorTable {
+func newDescriptorTable(queueSize int, mem []byte, itemSize int) *DescriptorTable {
 	dtSize := descriptorTableSize(queueSize)
 	if len(mem) != dtSize {
 		panic(fmt.Sprintf("memory size (%v) does not match required size "+
@@ -75,6 +75,7 @@ func newDescriptorTable(queueSize int, mem []byte) *DescriptorTable {
 		// We have no free descriptors until they were initialized.
 		freeHeadIndex: noFreeHead,
 		freeNum:       0,
+		itemSize:      itemSize, //todo configurable? needs to be page-aligned
 	}
 }
 
@@ -116,10 +117,8 @@ func (dt *DescriptorTable) BufferAddresses() map[uintptr]int {
 func (dt *DescriptorTable) initializeDescriptors() error {
 	numDescriptors := len(dt.descriptors)
 
-	itemSize := os.Getpagesize() //todo configurable? needs to be page-aligned
-
 	// Allocate ONE large region for all buffers
-	totalSize := itemSize * numDescriptors
+	totalSize := dt.itemSize * numDescriptors
 	basePtr, err := unix.MmapPtr(-1, 0, nil, uintptr(totalSize),
 		unix.PROT_READ|unix.PROT_WRITE,
 		unix.MAP_PRIVATE|unix.MAP_ANONYMOUS)
@@ -136,7 +135,7 @@ func (dt *DescriptorTable) initializeDescriptors() error {
 
 	for i := range dt.descriptors {
 		dt.descriptors[i] = Descriptor{
-			address: dt.bufferBase + uintptr(i*itemSize),
+			address: dt.bufferBase + uintptr(i*dt.itemSize),
 			length:  0,
 			// All descriptors should form a free chain that loops around.
 			flags: descriptorFlagHasNext,
@@ -202,8 +201,6 @@ func (dt *DescriptorTable) releaseBuffers() error {
 // caller should try again after some descriptor chains were used by the device
 // and returned back into the free chain.
 func (dt *DescriptorTable) createDescriptorChain(outBuffers [][]byte, numInBuffers int) (uint16, error) {
-	pageSize := os.Getpagesize()
-
 	// Calculate the number of descriptors needed to build the chain.
 	numDesc := uint16(len(outBuffers) + numInBuffers)
 
@@ -217,7 +214,7 @@ func (dt *DescriptorTable) createDescriptorChain(outBuffers [][]byte, numInBuffe
 
 	// Do we still have enough free descriptors?
 	if numDesc > dt.freeNum {
-		return 0, fmt.Errorf("%w: %d free but needed %d", ErrNotEnoughFreeDescriptors, dt.freeNum, numDesc)
+		return 0, ErrNotEnoughFreeDescriptors
 	}
 
 	// Above validation ensured that there is at least one free descriptor, so
@@ -238,16 +235,16 @@ func (dt *DescriptorTable) createDescriptorChain(outBuffers [][]byte, numInBuffe
 		desc := &dt.descriptors[next]
 		checkUnusedDescriptorLength(next, desc)
 
-		if len(buffer) > pageSize {
+		if len(buffer) > dt.itemSize {
 			// The caller should already prevent that from happening.
-			panic(fmt.Sprintf("out buffer %d has size %d which exceeds page size %d", i, len(buffer), pageSize))
+			panic(fmt.Sprintf("out buffer %d has size %d which exceeds desc length %d", i, len(buffer), dt.itemSize))
 		}
 
 		// Copy the buffer to the memory referenced by the descriptor.
 		// The descriptor address points to memory not managed by Go, so this
 		// conversion is safe. See https://github.com/golang/go/issues/58625
 		//goland:noinspection GoVetUnsafePointer
-		copy(unsafe.Slice((*byte)(unsafe.Pointer(desc.address)), pageSize), buffer)
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(desc.address)), dt.itemSize), buffer)
 		desc.length = uint32(len(buffer))
 
 		// Clear the flags in case there were any others set.
@@ -261,7 +258,7 @@ func (dt *DescriptorTable) createDescriptorChain(outBuffers [][]byte, numInBuffe
 		checkUnusedDescriptorLength(next, desc)
 
 		// Give the device the maximum available number of bytes to write into.
-		desc.length = uint32(pageSize)
+		desc.length = uint32(dt.itemSize)
 
 		// Mark the descriptor as device-writable.
 		desc.flags = descriptorFlagHasNext | descriptorFlagWritable

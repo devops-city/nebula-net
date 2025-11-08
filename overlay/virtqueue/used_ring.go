@@ -2,7 +2,6 @@ package virtqueue
 
 import (
 	"fmt"
-	"sync"
 	"unsafe"
 )
 
@@ -52,7 +51,7 @@ type UsedRing struct {
 	// processed.
 	lastIndex uint16
 
-	mu sync.Mutex
+	//mu sync.Mutex
 }
 
 // newUsedRing creates a used ring that uses the given underlying memory. The
@@ -87,9 +86,10 @@ func (r *UsedRing) Address() uintptr {
 
 // take returns all new [UsedElement]s that the device put into the ring and
 // that weren't already returned by a previous call to this method.
+// had a lock, I removed it
 func (r *UsedRing) take() []UsedElement {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	//r.mu.Lock()
+	//defer r.mu.Unlock()
 
 	ringIndex := *r.ringIndex
 	if ringIndex == r.lastIndex {

@@ -736,6 +736,7 @@ func (t *tun) Write(b []byte) (int, error) {
 
 	err := t.vdev.TransmitPacket(hdr, b)
 	if err != nil {
+		t.l.WithError(err).Error("Transmitting packet")
 		return 0, err
 	}
 	return maximum, nil

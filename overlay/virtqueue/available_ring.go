@@ -2,7 +2,6 @@ package virtqueue
 
 import (
 	"fmt"
-	"sync"
 	"unsafe"
 )
 
@@ -49,7 +48,7 @@ type AvailableRing struct {
 	// virtio specification.
 	usedEvent *uint16
 
-	mu sync.Mutex
+	//mu sync.Mutex
 }
 
 // newAvailableRing creates an available ring that uses the given underlying
@@ -84,8 +83,9 @@ func (r *AvailableRing) Address() uintptr {
 // advances the ring index accordingly to make the device process the new
 // descriptor chains.
 func (r *AvailableRing) offer(chainHeads []uint16) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	//always called under lock
+	//r.mu.Lock()
+	//defer r.mu.Unlock()
 
 	// Add descriptor chain heads to the ring.
 	for offset, head := range chainHeads {
