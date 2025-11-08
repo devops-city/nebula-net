@@ -309,8 +309,16 @@ func (t *tun) Write(b []byte) (int, error) {
 		NumBuffers: 0,
 	}
 
+	//use just tun
+	//vnethdrBuf := make([]byte, virtio.NetHdrSize+14+len(b)) //todo WHY
+	//if err := hdr.Encode(vnethdrBuf); err != nil {
+	//	//return fmt.Errorf("encode vnethdr: %w", err)
+	//}
+	//copy(vnethdrBuf[virtio.NetHdrSize:], b)
+	//return unix.Write(t.fd, vnethdrBuf)
+	//end
+
 	err := t.vdev.TransmitPacket(hdr, b)
-	//err := t.vdev.TransmitPacket2(b)
 	if err != nil {
 		return 0, err
 	}
