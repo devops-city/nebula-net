@@ -86,7 +86,7 @@ type Interface struct {
 	conntrackCacheTimeout time.Duration
 
 	writers []udp.Conn
-	readers []io.ReadWriteCloser
+	readers []overlay.TunDev
 
 	metricHandshakes    metrics.Histogram
 	messageMetrics      *MessageMetrics
@@ -177,7 +177,7 @@ func NewInterface(ctx context.Context, c *InterfaceConfig) (*Interface, error) {
 		routines:              c.routines,
 		version:               c.version,
 		writers:               make([]udp.Conn, c.routines),
-		readers:               make([]io.ReadWriteCloser, c.routines),
+		readers:               make([]overlay.TunDev, c.routines),
 		myVpnNetworks:         cs.myVpnNetworks,
 		myVpnNetworksTable:    cs.myVpnNetworksTable,
 		myVpnAddrs:            cs.myVpnAddrs,
@@ -225,7 +225,7 @@ func (f *Interface) activate() {
 	metrics.GetOrRegisterGauge("routines", nil).Update(int64(f.routines))
 
 	// Prepare n tun queues
-	var reader io.ReadWriteCloser = f.inside
+	var reader overlay.TunDev = f.inside
 	for i := 0; i < f.routines; i++ {
 		if i > 0 {
 			reader, err = f.inside.NewMultiQueueReader()
@@ -254,25 +254,52 @@ func (f *Interface) run() {
 	}
 }
 
-func (f *Interface) listenOut(i int) {
+func (f *Interface) listenOut(q int) {
 	runtime.LockOSThread()
 
 	var li udp.Conn
-	if i > 0 {
-		li = f.writers[i]
+	if q > 0 {
+		li = f.writers[q]
 	} else {
 		li = f.outside
 	}
 
+	const batch = 64 //todo
+
 	ctCache := firewall.NewConntrackCacheTicker(f.conntrackCacheTimeout)
 	lhh := f.lightHouse.NewRequestHandler()
-	plaintext := make([]byte, udp.MTU)
+	plaintexts := make([][]byte, batch)
+	outNeedsTun := make([]*int, batch)
+	for i := 0; i < batch; i++ {
+		plaintexts[i] = make([]byte, udp.MTU)
+		outNeedsTun[i] = new(int)
+		*outNeedsTun[i] = -1
+	}
+
 	h := &header.H{}
 	fwPacket := &firewall.Packet{}
 	nb := make([]byte, 12, 12)
 
-	li.ListenOut(func(fromUdpAddr netip.AddrPort, payload []byte) {
-		f.readOutsidePackets(fromUdpAddr, nil, plaintext[:0], payload, h, fwPacket, lhh, nb, i, ctCache.Get(f.l))
+	toSend := make([][]byte, batch)
+
+	li.ListenOut(func(fromUdpAddrs []netip.AddrPort, payloads [][]byte) {
+		toSend = toSend[:0]
+		for i := range plaintexts {
+			plaintexts[i] = plaintexts[i][:0]
+		}
+		f.readOutsidePacketsMany(fromUdpAddrs, plaintexts, outNeedsTun, payloads, h, fwPacket, lhh, nb, q, ctCache.Get(f.l))
+		for i := range plaintexts {
+			if *outNeedsTun[i] != -1 {
+				toSend = append(toSend, plaintexts[i][:*outNeedsTun[i]])
+				*outNeedsTun[i] = -1
+				//toSendCount++
+			}
+		}
+		//toSend = toSend[:toSendCount]
+		_, err := f.readers[q].WriteMany(toSend)
+		if err != nil {
+			f.l.WithError(err).Error("Failed to write messages")
+		}
 	})
 }
 

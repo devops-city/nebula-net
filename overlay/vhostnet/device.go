@@ -311,6 +311,33 @@ func (dev *Device) TransmitPacket(vnethdr virtio.NetHdr, packet []byte) error {
 	return nil
 }
 
+func (dev *Device) TransmitPackets(vnethdr virtio.NetHdr, packets [][]byte) error {
+	// Prepend the packet with its virtio-net header.
+	vnethdrBuf := make([]byte, virtio.NetHdrSize+14) //todo WHY
+	if err := vnethdr.Encode(vnethdrBuf); err != nil {
+		return fmt.Errorf("encode vnethdr: %w", err)
+	}
+	vnethdrBuf[virtio.NetHdrSize+14-2] = 0x86
+	vnethdrBuf[virtio.NetHdrSize+14-1] = 0xdd //todo ipv6 ethertype
+
+	chainIndexes, err := dev.transmitQueue.OfferOutDescriptorChains(vnethdrBuf, packets, true)
+	if err != nil {
+		return fmt.Errorf("offer descriptor chain: %w", err)
+	}
+
+	//todo blocking here suxxxx
+	// Wait for the packet to have been transmitted.
+	for i := range chainIndexes {
+		<-dev.transmitted[chainIndexes[i]]
+
+		if err = dev.transmitQueue.FreeDescriptorChain(chainIndexes[i]); err != nil {
+			return fmt.Errorf("free descriptor chain: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // ReceivePacket reads the next available packet from the receive queue of this
 // device and returns its [virtio.NetHdr] and packet data separately.
 //

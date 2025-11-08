@@ -257,7 +257,7 @@ func (t *tun) reload(c *config.C, initial bool) error {
 	return nil
 }
 
-func (t *tun) NewMultiQueueReader() (io.ReadWriteCloser, error) {
+func (t *tun) NewMultiQueueReader() (TunDev, error) {
 	//fd, err := unix.Open("/dev/net/tun", os.O_RDWR, 0)
 	//if err != nil {
 	//	return nil, err
@@ -735,6 +735,27 @@ func (t *tun) Write(b []byte) (int, error) {
 	}
 
 	err := t.vdev.TransmitPacket(hdr, b)
+	if err != nil {
+		t.l.WithError(err).Error("Transmitting packet")
+		return 0, err
+	}
+	return maximum, nil
+}
+
+func (t *tun) WriteMany(b [][]byte) (int, error) {
+	maximum := len(b) //we are RXing
+
+	hdr := virtio.NetHdr{ //todo
+		Flags:      unix.VIRTIO_NET_HDR_F_DATA_VALID,
+		GSOType:    unix.VIRTIO_NET_HDR_GSO_NONE,
+		HdrLen:     0,
+		GSOSize:    0,
+		CsumStart:  0,
+		CsumOffset: 0,
+		NumBuffers: 0,
+	}
+
+	err := t.vdev.TransmitPackets(hdr, b)
 	if err != nil {
 		t.l.WithError(err).Error("Transmitting packet")
 		return 0, err

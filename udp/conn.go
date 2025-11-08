@@ -9,8 +9,8 @@ import (
 const MTU = 9001
 
 type EncReader func(
-	addr netip.AddrPort,
-	payload []byte,
+	addrs []netip.AddrPort,
+	payload [][]byte,
 )
 
 type Conn interface {

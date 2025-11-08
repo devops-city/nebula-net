@@ -46,7 +46,7 @@ func (d *UserDevice) RoutesFor(ip netip.Addr) routing.Gateways {
 	return routing.Gateways{routing.NewGateway(ip, 1)}
 }
 
-func (d *UserDevice) NewMultiQueueReader() (io.ReadWriteCloser, error) {
+func (d *UserDevice) NewMultiQueueReader() (TunDev, error) {
 	return d, nil
 }
 
@@ -64,4 +64,16 @@ func (d *UserDevice) Close() error {
 	d.inboundWriter.Close()
 	d.outboundWriter.Close()
 	return nil
+}
+
+func (d *UserDevice) WriteMany(b [][]byte) (int, error) {
+	out := 0
+	for i := range b {
+		x, err := d.Write(b[i])
+		if err != nil {
+			return out, err
+		}
+		out += x
+	}
+	return out, nil
 }

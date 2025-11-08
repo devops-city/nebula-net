@@ -105,7 +105,19 @@ func (t *disabledTun) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func (t *disabledTun) NewMultiQueueReader() (io.ReadWriteCloser, error) {
+func (t *disabledTun) WriteMany(b [][]byte) (int, error) {
+	out := 0
+	for i := range b {
+		x, err := t.Write(b[i])
+		if err != nil {
+			return out, err
+		}
+		out += x
+	}
+	return out, nil
+}
+
+func (t *disabledTun) NewMultiQueueReader() (TunDev, error) {
 	return t, nil
 }
 

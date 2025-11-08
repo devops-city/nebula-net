@@ -345,6 +345,66 @@ func (sq *SplitQueue) OfferDescriptorChain(outBuffers [][]byte, numInBuffers int
 	return head, nil
 }
 
+func (sq *SplitQueue) OfferOutDescriptorChains(prepend []byte, outBuffers [][]byte, waitFree bool) ([]uint16, error) {
+	sq.ensureInitialized()
+
+	// TODO change this
+	// Each descriptor can only hold a whole memory page, so split large out
+	// buffers into multiple smaller ones.
+	outBuffers = splitBuffers(outBuffers, sq.pageSize)
+
+	// Synchronize the offering of descriptor chains. While the descriptor table
+	// and available ring are synchronized on their own as well, this does not
+	// protect us from interleaved calls which could cause reordering.
+	// By locking here, we can ensure that all descriptor chains are made
+	// available to the device in the same order as this method was called.
+	sq.offerMutex.Lock()
+	defer sq.offerMutex.Unlock()
+
+	chains := make([]uint16, len(outBuffers))
+
+	// Create a descriptor chain for the given buffers.
+	var (
+		head uint16
+		err  error
+	)
+	for i := range outBuffers {
+		for {
+			bufs := [][]byte{prepend, outBuffers[i]}
+			head, err = sq.descriptorTable.createDescriptorChain(bufs, 0)
+			if err == nil {
+				break
+			}
+
+			// I don't wanna use errors.Is, it's slow
+			//goland:noinspection GoDirectComparisonOfErrors
+			if err == ErrNotEnoughFreeDescriptors {
+				if waitFree {
+					// Wait for more free descriptors to be put back into the queue.
+					// If the number of free descriptors is still not sufficient, we'll
+					// land here again.
+					sq.blockForMoreDescriptors()
+					continue
+				} else {
+					return nil, err
+				}
+			}
+			return nil, fmt.Errorf("create descriptor chain: %w", err)
+		}
+		chains[i] = head
+	}
+
+	// Make the descriptor chain available to the device.
+	sq.availableRing.offer(chains)
+
+	// Notify the device to make it process the updated available ring.
+	if err := sq.kickEventFD.Kick(); err != nil {
+		return chains, fmt.Errorf("notify device: %w", err)
+	}
+
+	return chains, nil
+}
+
 // GetDescriptorChain returns the device-readable buffers (out buffers) and
 // device-writable buffers (in buffers) of the descriptor chain with the given
 // head index.

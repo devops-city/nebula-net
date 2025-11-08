@@ -120,7 +120,7 @@ func (u *StdConn) LocalAddr() (netip.AddrPort, error) {
 
 func (u *StdConn) ListenOut(r EncReader) {
 	var ip netip.Addr
-
+	addrPorts := make([]netip.AddrPort, u.batch)
 	msgs, buffers, names := u.PrepareRawMessages(u.batch)
 	read := u.ReadMulti
 	if u.batch == 1 {
@@ -141,8 +141,11 @@ func (u *StdConn) ListenOut(r EncReader) {
 			} else {
 				ip, _ = netip.AddrFromSlice(names[i][8:24])
 			}
-			r(netip.AddrPortFrom(ip.Unmap(), binary.BigEndian.Uint16(names[i][2:4])), buffers[i][:msgs[i].Len])
+			addrPorts[i] = netip.AddrPortFrom(ip.Unmap(), binary.BigEndian.Uint16(names[i][2:4]))
+			buffers[i] = buffers[i][:msgs[i].Len]
+
 		}
+		r(addrPorts, buffers)
 	}
 }
 

@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 
@@ -11,6 +12,11 @@ import (
 )
 
 const DefaultMTU = 1300
+
+type TunDev interface {
+	io.ReadWriteCloser
+	WriteMany([][]byte) (int, error)
+}
 
 // TODO: We may be able to remove routines
 type DeviceFactory func(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, routines int) (Device, error)
