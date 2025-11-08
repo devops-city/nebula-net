@@ -106,9 +106,7 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 	}
 
 	var req ifReq
-	//todo
 	req.Flags = uint16(unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_TUN_EXCL | unix.IFF_VNET_HDR)
-	//req.Flags = uint16(unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_TUN_EXCL)
 	if multiqueue {
 		//req.Flags |= unix.IFF_MULTI_QUEUE
 	}
@@ -125,12 +123,12 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 
 	file := os.NewFile(uintptr(fd), "/dev/net/tun")
 
-	//todo
 	err = unix.IoctlSetPointerInt(fd, unix.TUNSETVNETHDRSZ, virtio.NetHdrSize)
 	if err != nil {
 		return nil, fmt.Errorf("set vnethdr size: %w", err)
 	}
 
+	//|unix.TUN_F_USO4|unix.TUN_F_USO6
 	err = unix.IoctlSetInt(fd, unix.TUNSETOFFLOAD, 0) //todo!
 	if err != nil {
 		return nil, fmt.Errorf("set offloads: %w", err)
@@ -156,7 +154,7 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 
 	vdev, err := vhostnet.NewDevice(
 		vhostnet.WithBackendFD(fd),
-		vhostnet.WithQueueSize(8), //todo config
+		vhostnet.WithQueueSize(16), //todo config
 	)
 	if err != nil {
 		return nil, err
@@ -308,15 +306,6 @@ func (t *tun) Write(b []byte) (int, error) {
 		CsumOffset: 0,
 		NumBuffers: 0,
 	}
-
-	//use just tun
-	//vnethdrBuf := make([]byte, virtio.NetHdrSize+14+len(b)) //todo WHY
-	//if err := hdr.Encode(vnethdrBuf); err != nil {
-	//	//return fmt.Errorf("encode vnethdr: %w", err)
-	//}
-	//copy(vnethdrBuf[virtio.NetHdrSize:], b)
-	//return unix.Write(t.fd, vnethdrBuf)
-	//end
 
 	err := t.vdev.TransmitPacket(hdr, b)
 	if err != nil {
