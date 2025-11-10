@@ -128,8 +128,10 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 		return nil, fmt.Errorf("set vnethdr size: %w", err)
 	}
 
+	flags := 0
+	//flags := unix.TUN_F_CSUM
 	//|unix.TUN_F_USO4|unix.TUN_F_USO6
-	err = unix.IoctlSetInt(fd, unix.TUNSETOFFLOAD, 0) //todo!
+	err = unix.IoctlSetInt(fd, unix.TUNSETOFFLOAD, flags)
 	if err != nil {
 		return nil, fmt.Errorf("set offloads: %w", err)
 	}

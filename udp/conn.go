@@ -4,13 +4,13 @@ import (
 	"net/netip"
 
 	"github.com/slackhq/nebula/config"
+	"github.com/slackhq/nebula/packet"
 )
 
 const MTU = 9001
 
 type EncReader func(
-	addrs []netip.AddrPort,
-	payload [][]byte,
+	[]*packet.Packet,
 )
 
 type Conn interface {

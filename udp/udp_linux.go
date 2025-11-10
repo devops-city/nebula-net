@@ -18,18 +18,11 @@ import (
 )
 
 type StdConn struct {
-	sysFd int
-	isV4  bool
-	l     *logrus.Logger
-	batch int
-}
-
-func maybeIPV4(ip net.IP) (net.IP, bool) {
-	ip4 := ip.To4()
-	if ip4 != nil {
-		return ip4, true
-	}
-	return ip, false
+	sysFd     int
+	isV4      bool
+	l         *logrus.Logger
+	batch     int
+	enableGRO bool
 }
 
 func NewListener(l *logrus.Logger, ip netip.Addr, port int, multi bool, batch int) (Conn, error) {
@@ -119,9 +112,7 @@ func (u *StdConn) LocalAddr() (netip.AddrPort, error) {
 }
 
 func (u *StdConn) ListenOut(r EncReader) {
-	var ip netip.Addr
-	addrPorts := make([]netip.AddrPort, u.batch)
-	msgs, buffers, names := u.PrepareRawMessages(u.batch)
+	msgs, packets := u.PrepareRawMessages(u.batch, u.isV4)
 	read := u.ReadMulti
 	if u.batch == 1 {
 		read = u.ReadSingle
@@ -135,17 +126,13 @@ func (u *StdConn) ListenOut(r EncReader) {
 		}
 
 		for i := 0; i < n; i++ {
-			// Its ok to skip the ok check here, the slicing is the only error that can occur and it will panic
-			if u.isV4 {
-				ip, _ = netip.AddrFromSlice(names[i][4:8])
-			} else {
-				ip, _ = netip.AddrFromSlice(names[i][8:24])
-			}
-			addrPorts[i] = netip.AddrPortFrom(ip.Unmap(), binary.BigEndian.Uint16(names[i][2:4]))
-			buffers[i] = buffers[i][:msgs[i].Len]
-
+			packets[i].Payload = packets[i].Payload[:msgs[i].Len]
+			packets[i].Update(getRawMessageControlLen(&msgs[i]))
 		}
-		r(addrPorts, buffers)
+		r(packets)
+		for i := 0; i < n; i++ { //todo reset this in prev loop, but this makes debug ez
+			msgs[i].Hdr.Controllen = uint64(unix.CmsgSpace(2))
+		}
 	}
 }
 
@@ -296,6 +283,27 @@ func (u *StdConn) ReloadConfig(c *config.C) {
 		} else {
 			u.l.WithError(err).Error("Failed to set listen.so_mark")
 		}
+	}
+	u.configureGRO(true)
+}
+
+func (u *StdConn) configureGRO(enable bool) {
+	if enable == u.enableGRO {
+		return
+	}
+
+	if enable {
+		if err := unix.SetsockoptInt(u.sysFd, unix.SOL_UDP, unix.UDP_GRO, 1); err != nil {
+			u.l.WithError(err).Warn("Failed to enable UDP GRO")
+			return
+		}
+		u.enableGRO = true
+		u.l.Info("UDP GRO enabled")
+	} else {
+		if err := unix.SetsockoptInt(u.sysFd, unix.SOL_UDP, unix.UDP_GRO, 0); err != nil && err != unix.ENOPROTOOPT {
+			u.l.WithError(err).Warn("Failed to disable UDP GRO")
+		}
+		u.enableGRO = false
 	}
 }
 

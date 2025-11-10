@@ -18,6 +18,7 @@ import (
 	"github.com/slackhq/nebula/firewall"
 	"github.com/slackhq/nebula/header"
 	"github.com/slackhq/nebula/overlay"
+	"github.com/slackhq/nebula/packet"
 	"github.com/slackhq/nebula/udp"
 )
 
@@ -268,12 +269,9 @@ func (f *Interface) listenOut(q int) {
 
 	ctCache := firewall.NewConntrackCacheTicker(f.conntrackCacheTimeout)
 	lhh := f.lightHouse.NewRequestHandler()
-	plaintexts := make([][]byte, batch)
-	outNeedsTun := make([]*int, batch)
+	outPackets := make([]*packet.OutPacket, batch)
 	for i := 0; i < batch; i++ {
-		plaintexts[i] = make([]byte, udp.MTU)
-		outNeedsTun[i] = new(int)
-		*outNeedsTun[i] = -1
+		outPackets[i] = packet.NewOut()
 	}
 
 	h := &header.H{}
@@ -282,16 +280,23 @@ func (f *Interface) listenOut(q int) {
 
 	toSend := make([][]byte, batch)
 
-	li.ListenOut(func(fromUdpAddrs []netip.AddrPort, payloads [][]byte) {
+	li.ListenOut(func(pkts []*packet.Packet) {
 		toSend = toSend[:0]
-		for i := range plaintexts {
-			plaintexts[i] = plaintexts[i][:0]
+		for i := range outPackets {
+			outPackets[i].Valid = false
+			outPackets[i].SegCounter = 0
 		}
-		f.readOutsidePacketsMany(fromUdpAddrs, plaintexts, outNeedsTun, payloads, h, fwPacket, lhh, nb, q, ctCache.Get(f.l))
-		for i := range plaintexts {
-			if *outNeedsTun[i] != -1 {
-				toSend = append(toSend, plaintexts[i][:*outNeedsTun[i]])
-				*outNeedsTun[i] = -1
+
+		f.readOutsidePacketsMany(pkts, outPackets, h, fwPacket, lhh, nb, q, ctCache.Get(f.l))
+		for i := range outPackets {
+			if pkts[i].OutLen != -1 {
+				for j := 0; j < outPackets[i].SegCounter; j++ {
+					if len(outPackets[i].Segments[j]) > 0 {
+						toSend = append(toSend, outPackets[i].Segments[j])
+					}
+
+				}
+				//toSend = append(toSend, outPackets[i])
 				//toSendCount++
 			}
 		}
