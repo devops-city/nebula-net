@@ -745,7 +745,9 @@ func (t *tun) Write(b []byte) (int, error) {
 
 func (t *tun) WriteMany(b [][]byte) (int, error) {
 	maximum := len(b) //we are RXing
-
+	if maximum == 0 {
+		return 0, nil
+	}
 	hdr := virtio.NetHdr{ //todo
 		Flags:      unix.VIRTIO_NET_HDR_F_DATA_VALID,
 		GSOType:    unix.VIRTIO_NET_HDR_GSO_NONE,

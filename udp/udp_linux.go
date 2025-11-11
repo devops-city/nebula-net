@@ -129,7 +129,7 @@ func (u *StdConn) ListenOut(r EncReader) {
 			packets[i].Payload = packets[i].Payload[:msgs[i].Len]
 			packets[i].Update(getRawMessageControlLen(&msgs[i]))
 		}
-		r(packets)
+		r(packets[:n])
 		for i := 0; i < n; i++ { //todo reset this in prev loop, but this makes debug ez
 			msgs[i].Hdr.Controllen = uint64(unix.CmsgSpace(2))
 		}

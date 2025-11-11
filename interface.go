@@ -288,7 +288,7 @@ func (f *Interface) listenOut(q int) {
 		}
 
 		f.readOutsidePacketsMany(pkts, outPackets, h, fwPacket, lhh, nb, q, ctCache.Get(f.l))
-		for i := range outPackets {
+		for i := range pkts {
 			if pkts[i].OutLen != -1 {
 				for j := 0; j < outPackets[i].SegCounter; j++ {
 					if len(outPackets[i].Segments[j]) > 0 {
@@ -298,12 +298,15 @@ func (f *Interface) listenOut(q int) {
 			}
 		}
 		//toSend = toSend[:toSendCount]
-		if len(toSend) != 0 {
-			_, err := f.readers[q].WriteMany(toSend)
+		for i := 0; i < len(toSend); i += batch {
+			x := min(len(toSend[i:]), batch)
+			toSendThisTime := toSend[i : i+x]
+			_, err := f.readers[q].WriteMany(toSendThisTime)
 			if err != nil {
 				f.l.WithError(err).Error("Failed to write messages")
 			}
 		}
+
 	})
 }
 
