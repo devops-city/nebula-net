@@ -349,7 +349,7 @@ func (dt *DescriptorTable) getDescriptorChain(head uint16) (outBuffers, inBuffer
 	return
 }
 
-func (dt *DescriptorTable) getDescriptorChainContents(head uint16, out []byte) (int, error) {
+func (dt *DescriptorTable) getDescriptorChainContents(head uint16, out []byte, maxLen int) (int, error) {
 	if int(head) > len(dt.descriptors) {
 		return 0, fmt.Errorf("%w: index out of range", ErrInvalidDescriptorChain)
 	}
@@ -387,7 +387,9 @@ func (dt *DescriptorTable) getDescriptorChainContents(head uint16, out []byte) (
 
 		next = desc.next
 	}
-
+	if maxLen > 0 {
+		//todo length = min(maxLen, length)
+	}
 	//set out to length:
 	out = out[:length]
 
@@ -399,7 +401,7 @@ func (dt *DescriptorTable) getDescriptorChainContents(head uint16, out []byte) (
 		// The descriptor address points to memory not managed by Go, so this
 		// conversion is safe. See https://github.com/golang/go/issues/58625
 		//goland:noinspection GoVetUnsafePointer
-		bs := unsafe.Slice((*byte)(unsafe.Pointer(desc.address)), desc.length)
+		bs := unsafe.Slice((*byte)(unsafe.Pointer(desc.address)), min(uint32(length-copied), desc.length))
 		copied += copy(out[copied:], bs)
 
 		// Is this the tail of the chain?

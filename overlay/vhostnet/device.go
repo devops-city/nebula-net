@@ -298,7 +298,7 @@ func (dev *Device) TransmitPackets(vnethdr virtio.NetHdr, packets [][]byte) erro
 func (dev *Device) processChains(pkt *packet.VirtIOPacket, chains []virtqueue.UsedElement) (int, error) {
 	//read first element to see how many descriptors we need:
 	pkt.Payload = pkt.Payload[:cap(pkt.Payload)]
-	n, err := dev.ReceiveQueue.GetDescriptorChainContents(uint16(chains[0].DescriptorIndex), pkt.Payload)
+	n, err := dev.ReceiveQueue.GetDescriptorChainContents(uint16(chains[0].DescriptorIndex), pkt.Payload, int(chains[0].Length)) //todo
 	if err != nil {
 		return 0, err
 	}
@@ -333,7 +333,7 @@ func (dev *Device) processChains(pkt *packet.VirtIOPacket, chains []virtqueue.Us
 	i := 1
 	// we used chain 0 already
 	for i = 1; i < len(chains); i++ {
-		n, err = dev.ReceiveQueue.GetDescriptorChainContents(uint16(chains[i].DescriptorIndex), pkt.Payload[cursor:])
+		n, err = dev.ReceiveQueue.GetDescriptorChainContents(uint16(chains[i].DescriptorIndex), pkt.Payload[cursor:], int(chains[i].Length))
 		if err != nil {
 			// When this fails we may miss to free some descriptor chains. We
 			// could try to mitigate this by deferring the freeing somehow, but

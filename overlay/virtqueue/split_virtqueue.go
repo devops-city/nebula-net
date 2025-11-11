@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"syscall"
 
 	"github.com/slackhq/nebula/overlay/eventfd"
 	"golang.org/x/sys/unix"
@@ -29,16 +30,6 @@ type SplitQueue struct {
 	// callEventFD is used by the device to signal when it has used descriptor
 	// chains and put them in the used ring.
 	callEventFD eventfd.EventFD
-
-	// UsedChains is a chanel that receives [UsedElement]s for descriptor chains
-	// that were used by the device.
-	UsedChains chan UsedElement
-
-	// moreFreeDescriptors is a channel that signals when any descriptors were
-	// put back into the free chain of the descriptor table. This is used to
-	// unblock methods waiting for available room in the queue to create new
-	// descriptor chains again.
-	moreFreeDescriptors chan struct{}
 
 	// stop is used by [SplitQueue.Close] to cancel the goroutine that handles
 	// used buffer notifications. It blocks until the goroutine ended.
@@ -130,10 +121,6 @@ func NewSplitQueue(queueSize int) (_ *SplitQueue, err error) {
 	if err = sq.descriptorTable.initializeDescriptors(); err != nil {
 		return nil, fmt.Errorf("initialize descriptors: %w", err)
 	}
-
-	// Initialize channels.
-	sq.UsedChains = make(chan UsedElement, queueSize)
-	sq.moreFreeDescriptors = make(chan struct{})
 
 	sq.epoll, err = eventfd.NewEpoll()
 	if err != nil {
@@ -366,7 +353,8 @@ func (sq *SplitQueue) OfferOutDescriptorChains(prepend []byte, outBuffers [][]by
 				// Wait for more free descriptors to be put back into the queue.
 				// If the number of free descriptors is still not sufficient, we'll
 				// land here again.
-				<-sq.moreFreeDescriptors
+				//todo should never happen
+				syscall.Syscall(syscall.SYS_SCHED_YIELD, 0, 0, 0) // Cheap barrier
 				continue
 			}
 			return nil, fmt.Errorf("create descriptor chain: %w", err)
@@ -400,9 +388,9 @@ func (sq *SplitQueue) GetDescriptorChain(head uint16) (outBuffers, inBuffers [][
 	return sq.descriptorTable.getDescriptorChain(head)
 }
 
-func (sq *SplitQueue) GetDescriptorChainContents(head uint16, out []byte) (int, error) {
+func (sq *SplitQueue) GetDescriptorChainContents(head uint16, out []byte, maxLen int) (int, error) {
 	sq.ensureInitialized()
-	return sq.descriptorTable.getDescriptorChainContents(head, out)
+	return sq.descriptorTable.getDescriptorChainContents(head, out, maxLen)
 }
 
 // FreeDescriptorChain frees the descriptor chain with the given head index.
@@ -415,18 +403,9 @@ func (sq *SplitQueue) GetDescriptorChainContents(head uint16, out []byte) (int, 
 // When there are outstanding calls for [SplitQueue.OfferDescriptorChain] that
 // are waiting for free room in the queue, they may become unblocked by this.
 func (sq *SplitQueue) FreeDescriptorChain(head uint16) error {
-	sq.ensureInitialized()
-
 	//not called under lock
 	if err := sq.descriptorTable.freeDescriptorChain(head); err != nil {
 		return fmt.Errorf("free: %w", err)
-	}
-
-	// There is more free room in the descriptor table now.
-	// This is a fire-and-forget signal, so do not block when nobody listens.
-	select { //todo eliminate
-	case sq.moreFreeDescriptors <- struct{}{}:
-	default:
 	}
 
 	return nil
@@ -472,10 +451,6 @@ func (sq *SplitQueue) Close() error {
 		if err := sq.stop(); err != nil {
 			errs = append(errs, fmt.Errorf("stop consume used ring: %w", err))
 		}
-
-		// The stop function blocked until the goroutine ended, so the channel
-		// can now safely be closed.
-		close(sq.UsedChains)
 
 		// Make sure that this code block is executed only once.
 		sq.stop = nil

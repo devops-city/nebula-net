@@ -184,6 +184,13 @@ func (u *StdConn) WriteTo(b []byte, ip netip.AddrPort) error {
 	return u.writeTo6(b, ip)
 }
 
+func (u *StdConn) WriteToBatch(b []byte, ip netip.AddrPort) error {
+	if u.isV4 {
+		return u.writeTo4(b, ip)
+	}
+	return u.writeTo6(b, ip)
+}
+
 func (u *StdConn) writeTo6(b []byte, ip netip.AddrPort) error {
 	var rsa unix.RawSockaddrInet6
 	rsa.Family = unix.AF_INET6
