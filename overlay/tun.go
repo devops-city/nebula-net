@@ -2,20 +2,21 @@ package overlay
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"net/netip"
 
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
+	"github.com/slackhq/nebula/overlay/virtqueue"
 	"github.com/slackhq/nebula/util"
 )
 
 const DefaultMTU = 1300
 
 type TunDev interface {
-	io.ReadWriteCloser
+	ReadMany([][]byte) (int, error)
 	WriteMany([][]byte) (int, error)
+	GetQueues() []*virtqueue.SplitQueue
 }
 
 // TODO: We may be able to remove routines

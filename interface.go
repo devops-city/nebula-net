@@ -18,6 +18,7 @@ import (
 	"github.com/slackhq/nebula/firewall"
 	"github.com/slackhq/nebula/header"
 	"github.com/slackhq/nebula/overlay"
+	"github.com/slackhq/nebula/overlay/virtio"
 	"github.com/slackhq/nebula/packet"
 	"github.com/slackhq/nebula/udp"
 )
@@ -308,18 +309,31 @@ func (f *Interface) listenOut(q int) {
 	})
 }
 
-func (f *Interface) listenIn(reader io.ReadWriteCloser, i int) {
+func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 	runtime.LockOSThread()
 
-	packet := make([]byte, mtu)
+	const batch = 64
+	originalPackets := make([][]byte, batch) //todo batch config
+	for i := 0; i < batch; i++ {
+		originalPackets[i] = make([]byte, 0xffff)
+	}
 	out := make([]byte, mtu)
 	fwPacket := &firewall.Packet{}
 	nb := make([]byte, 12, 12)
 
 	conntrackCache := firewall.NewConntrackCacheTicker(f.conntrackCacheTimeout)
 
+	queues := reader.GetQueues()
+	if len(queues) == 0 {
+		f.l.Fatal("Failed to get queues")
+	}
+	queue := queues[0]
+
 	for {
-		n, err := reader.Read(packet)
+
+		n, err := reader.ReadMany(originalPacket)
+		//todo!!
+		pkt := originalPacket[virtio.NetHdrSize : n+virtio.NetHdrSize]
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) && f.closed.Load() {
 				return
@@ -330,7 +344,7 @@ func (f *Interface) listenIn(reader io.ReadWriteCloser, i int) {
 			os.Exit(2)
 		}
 
-		f.consumeInsidePacket(packet[:n], fwPacket, nb, out, i, conntrackCache.Get(f.l))
+		f.consumeInsidePacket(pkt, fwPacket, nb, out, queueNum, conntrackCache.Get(f.l))
 	}
 }
 

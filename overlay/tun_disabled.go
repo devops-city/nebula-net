@@ -9,6 +9,7 @@ import (
 	"github.com/rcrowley/go-metrics"
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/iputil"
+	"github.com/slackhq/nebula/overlay/virtqueue"
 	"github.com/slackhq/nebula/routing"
 )
 
@@ -38,6 +39,10 @@ func newDisabledTun(vpnNetworks []netip.Prefix, queueLen int, metricsEnabled boo
 	}
 
 	return tun
+}
+
+func (*disabledTun) GetQueues() []*virtqueue.SplitQueue {
+	return nil
 }
 
 func (*disabledTun) Activate() error {
@@ -115,6 +120,10 @@ func (t *disabledTun) WriteMany(b [][]byte) (int, error) {
 		out += x
 	}
 	return out, nil
+}
+
+func (t *disabledTun) ReadMany(b [][]byte) (int, error) {
+	return t.Read(b[0])
 }
 
 func (t *disabledTun) NewMultiQueueReader() (TunDev, error) {

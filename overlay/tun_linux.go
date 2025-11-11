@@ -5,7 +5,6 @@ package overlay
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"github.com/slackhq/nebula/config"
 	"github.com/slackhq/nebula/overlay/vhostnet"
 	"github.com/slackhq/nebula/overlay/virtio"
+	"github.com/slackhq/nebula/overlay/virtqueue"
 	"github.com/slackhq/nebula/routing"
 	"github.com/slackhq/nebula/util"
 	"github.com/vishvananda/netlink"
@@ -27,7 +27,7 @@ import (
 )
 
 type tun struct {
-	io.ReadWriteCloser
+	file        *os.File
 	fd          int
 	vdev        *vhostnet.Device
 	Device      string
@@ -49,6 +49,10 @@ type tun struct {
 
 func (t *tun) Networks() []netip.Prefix {
 	return t.vpnNetworks
+}
+
+func (t *tun) GetQueues() []*virtqueue.SplitQueue {
+	return []*virtqueue.SplitQueue{t.vdev.ReceiveQueue, t.vdev.TransmitQueue}
 }
 
 type ifReq struct {
@@ -129,8 +133,7 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 	}
 
 	flags := 0
-	//flags := unix.TUN_F_CSUM
-	//|unix.TUN_F_USO4|unix.TUN_F_USO6
+	//flags = //unix.TUN_F_CSUM //| unix.TUN_F_TSO4 | unix.TUN_F_USO4 | unix.TUN_F_TSO6 | unix.TUN_F_USO6
 	err = unix.IoctlSetInt(fd, unix.TUNSETOFFLOAD, flags)
 	if err != nil {
 		return nil, fmt.Errorf("set offloads: %w", err)
@@ -168,7 +171,7 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 
 func newTunGeneric(c *config.C, l *logrus.Logger, file *os.File, vpnNetworks []netip.Prefix) (*tun, error) {
 	t := &tun{
-		ReadWriteCloser:           file,
+		file:                      file,
 		fd:                        int(file.Fd()),
 		vpnNetworks:               vpnNetworks,
 		TXQueueLen:                c.GetInt("tun.tx_queue", 500),
@@ -699,8 +702,8 @@ func (t *tun) Close() error {
 		_ = t.vdev.Close()
 	}
 
-	if t.ReadWriteCloser != nil {
-		_ = t.ReadWriteCloser.Close()
+	if t.file != nil {
+		_ = t.file.Close()
 	}
 
 	if t.ioctlFd > 0 {
@@ -710,17 +713,17 @@ func (t *tun) Close() error {
 	return nil
 }
 
-func (t *tun) Read(p []byte) (int, error) {
-	hdr, out, err := t.vdev.ReceivePacket() //we are TXing
+func (t *tun) ReadMany(p [][]byte) (int, error) {
+	//todo call consumeUsedRing here instead of its own thread
+
+	n, hdr, err := t.vdev.ReceivePacket(p) //we are TXing
 	if err != nil {
 		return 0, err
 	}
 	if hdr.NumBuffers > 1 {
 		t.l.WithField("num_buffers", hdr.NumBuffers).Info("wow, lots to TX from tun")
 	}
-	p = p[:len(out)]
-	copy(p, out)
-	return len(out), nil
+	return n, nil
 }
 
 func (t *tun) Write(b []byte) (int, error) {

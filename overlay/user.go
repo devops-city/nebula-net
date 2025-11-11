@@ -6,6 +6,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
+	"github.com/slackhq/nebula/overlay/virtqueue"
 	"github.com/slackhq/nebula/routing"
 )
 
@@ -66,6 +67,10 @@ func (d *UserDevice) Close() error {
 	return nil
 }
 
+func (d *UserDevice) ReadMany(b [][]byte) (int, error) {
+	return d.Read(b[0])
+}
+
 func (d *UserDevice) WriteMany(b [][]byte) (int, error) {
 	out := 0
 	for i := range b {
@@ -76,4 +81,8 @@ func (d *UserDevice) WriteMany(b [][]byte) (int, error) {
 		out += x
 	}
 	return out, nil
+}
+
+func (*UserDevice) GetQueues() []*virtqueue.SplitQueue {
+	return nil
 }

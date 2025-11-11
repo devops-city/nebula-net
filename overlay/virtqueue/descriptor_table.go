@@ -349,6 +349,74 @@ func (dt *DescriptorTable) getDescriptorChain(head uint16) (outBuffers, inBuffer
 	return
 }
 
+func (dt *DescriptorTable) getDescriptorChainContents(head uint16, out []byte) (int, error) {
+	if int(head) > len(dt.descriptors) {
+		return 0, fmt.Errorf("%w: index out of range", ErrInvalidDescriptorChain)
+	}
+
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
+
+	// Iterate over the chain. The iteration is limited to the queue size to
+	// avoid ending up in an endless loop when things go very wrong.
+
+	length := 0
+	//find length
+	next := head
+	for range len(dt.descriptors) {
+		if next == dt.freeHeadIndex {
+			return 0, fmt.Errorf("%w: must not be part of the free chain", ErrInvalidDescriptorChain)
+		}
+
+		desc := &dt.descriptors[next]
+
+		if desc.flags&descriptorFlagWritable == 0 {
+			return 0, fmt.Errorf("receive queue contains device-readable buffer")
+		}
+		length += int(desc.length)
+
+		// Is this the tail of the chain?
+		if desc.flags&descriptorFlagHasNext == 0 {
+			break
+		}
+
+		// Detect loops.
+		if desc.next == head {
+			return 0, fmt.Errorf("%w: contains a loop", ErrInvalidDescriptorChain)
+		}
+
+		next = desc.next
+	}
+
+	//set out to length:
+	out = out[:length]
+
+	//now do the copying
+	copied := 0
+	for range len(dt.descriptors) {
+		desc := &dt.descriptors[next]
+
+		// The descriptor address points to memory not managed by Go, so this
+		// conversion is safe. See https://github.com/golang/go/issues/58625
+		//goland:noinspection GoVetUnsafePointer
+		bs := unsafe.Slice((*byte)(unsafe.Pointer(desc.address)), desc.length)
+		copied += copy(out[copied:], bs)
+
+		// Is this the tail of the chain?
+		if desc.flags&descriptorFlagHasNext == 0 {
+			break
+		}
+
+		// we did this already, no need to detect loops.
+		next = desc.next
+	}
+	if copied != length {
+		panic(fmt.Sprintf("expected to copy %d bytes but only copied %d bytes", length, copied))
+	}
+
+	return length, nil
+}
+
 // freeDescriptorChain can be used to free a descriptor chain when it is no
 // longer in use. The descriptor chain that starts with the given index will be
 // put back into the free chain, so the descriptors can be used for later calls

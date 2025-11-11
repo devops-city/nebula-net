@@ -49,6 +49,8 @@ type SplitQueue struct {
 	offerMutex sync.Mutex
 	pageSize   int
 	itemSize   int
+
+	epoll eventfd.Epoll
 }
 
 // NewSplitQueue allocates a new [SplitQueue] in memory. The given queue size
@@ -132,6 +134,15 @@ func NewSplitQueue(queueSize int) (_ *SplitQueue, err error) {
 	sq.usedChains = make(chan UsedElement, queueSize)
 	sq.moreFreeDescriptors = make(chan struct{})
 
+	sq.epoll, err = eventfd.NewEpoll()
+	if err != nil {
+		return nil, err
+	}
+	err = sq.epoll.AddEvent(sq.callEventFD.FD())
+	if err != nil {
+		return nil, err
+	}
+
 	// Consume used buffer notifications in the background.
 	sq.stop = sq.startConsumeUsedRing()
 
@@ -194,25 +205,9 @@ func (sq *SplitQueue) UsedDescriptorChains() chan UsedElement {
 }
 
 // startConsumeUsedRing starts a goroutine that runs [consumeUsedRing].
-// A function is returned that can be used to gracefully cancel it.
+// A function is returned that can be used to gracefully cancel it. todo rename
 func (sq *SplitQueue) startConsumeUsedRing() func() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error)
-
-	ep, err := eventfd.NewEpoll()
-	if err != nil {
-		panic(err)
-	}
-	err = ep.AddEvent(sq.callEventFD.FD())
-	if err != nil {
-		panic(err)
-	}
-
-	go func() {
-		done <- sq.consumeUsedRing(ctx, &ep)
-	}()
 	return func() error {
-		cancel()
 
 		// The goroutine blocks until it receives a signal on the event file
 		// descriptor, so it will never notice the context being canceled.
@@ -221,43 +216,28 @@ func (sq *SplitQueue) startConsumeUsedRing() func() error {
 		if err := sq.callEventFD.Kick(); err != nil {
 			return fmt.Errorf("wake up goroutine: %w", err)
 		}
-
-		// Wait for the goroutine to end. This prevents the event file
-		// descriptor to be closed while it's still being used.
-		// If the goroutine failed, this is the last chance to propagate the
-		// error so it at least doesn't go unnoticed, even though the error may
-		// be older already.
-		if err := <-done; err != nil {
-			return fmt.Errorf("goroutine: consume used ring: %w", err)
-		}
 		return nil
 	}
 }
 
-// consumeUsedRing runs in a goroutine, waits for the device to signal that it
-// has used descriptor chains and puts all new [UsedElement]s into the channel
-// for them.
-func (sq *SplitQueue) consumeUsedRing(ctx context.Context, epoll *eventfd.Epoll) error {
+// BlockAndGetHeads waits for the device to signal that it has used descriptor chains and returns all [UsedElement]s
+func (sq *SplitQueue) BlockAndGetHeads(ctx context.Context) ([]UsedElement, error) {
 	var n int
 	var err error
 	for ctx.Err() == nil {
-
 		// Wait for a signal from the device.
-		if n, err = epoll.Block(); err != nil {
-			return fmt.Errorf("wait: %w", err)
+		if n, err = sq.epoll.Block(); err != nil {
+			return nil, fmt.Errorf("wait: %w", err)
 		}
 
 		if n > 0 {
-			_ = epoll.Clear() //???
-
-			// Process all new used elements.
-			for _, usedElement := range sq.usedRing.take() {
-				sq.usedChains <- usedElement
-			}
+			out := sq.usedRing.take()
+			_ = sq.epoll.Clear() //???
+			return out, nil
 		}
 	}
 
-	return nil
+	return nil, ctx.Err()
 }
 
 // blockForMoreDescriptors blocks on a channel waiting for more descriptors to free up.
@@ -314,6 +294,55 @@ func (sq *SplitQueue) OfferDescriptorChain(outBuffers [][]byte, numInBuffers int
 	)
 	for {
 		head, err = sq.descriptorTable.createDescriptorChain(outBuffers, numInBuffers)
+		if err == nil {
+			break
+		}
+
+		// I don't wanna use errors.Is, it's slow
+		//goland:noinspection GoDirectComparisonOfErrors
+		if err == ErrNotEnoughFreeDescriptors {
+			if waitFree {
+				// Wait for more free descriptors to be put back into the queue.
+				// If the number of free descriptors is still not sufficient, we'll
+				// land here again.
+				sq.blockForMoreDescriptors()
+				continue
+			} else {
+				return 0, err
+			}
+		}
+		return 0, fmt.Errorf("create descriptor chain: %w", err)
+	}
+
+	// Make the descriptor chain available to the device.
+	sq.availableRing.offer([]uint16{head})
+
+	// Notify the device to make it process the updated available ring.
+	if err := sq.kickEventFD.Kick(); err != nil {
+		return head, fmt.Errorf("notify device: %w", err)
+	}
+
+	return head, nil
+}
+
+func (sq *SplitQueue) OfferInDescriptorChains(numInBuffers int, waitFree bool) (uint16, error) {
+	sq.ensureInitialized()
+
+	// Synchronize the offering of descriptor chains. While the descriptor table
+	// and available ring are synchronized on their own as well, this does not
+	// protect us from interleaved calls which could cause reordering.
+	// By locking here, we can ensure that all descriptor chains are made
+	// available to the device in the same order as this method was called.
+	sq.offerMutex.Lock()
+	defer sq.offerMutex.Unlock()
+
+	// Create a descriptor chain for the given buffers.
+	var (
+		head uint16
+		err  error
+	)
+	for {
+		head, err = sq.descriptorTable.createDescriptorChain(nil, numInBuffers)
 		if err == nil {
 			break
 		}
@@ -420,6 +449,11 @@ func (sq *SplitQueue) GetDescriptorChain(head uint16) (outBuffers, inBuffers [][
 	return sq.descriptorTable.getDescriptorChain(head)
 }
 
+func (sq *SplitQueue) GetDescriptorChainContents(head uint16, out []byte) (int, error) {
+	sq.ensureInitialized()
+	return sq.descriptorTable.getDescriptorChainContents(head, out)
+}
+
 // FreeDescriptorChain frees the descriptor chain with the given head index.
 // The head index must be one that was returned by a previous call to
 // [SplitQueue.OfferDescriptorChain] and the descriptor chain must not have been
@@ -442,6 +476,35 @@ func (sq *SplitQueue) FreeDescriptorChain(head uint16) error {
 	select {
 	case sq.moreFreeDescriptors <- struct{}{}:
 	default:
+	}
+
+	return nil
+}
+
+func (sq *SplitQueue) FreeAndOfferDescriptorChains(head uint16) error {
+	sq.ensureInitialized()
+
+	//todo I don't think we need this here?
+	// Synchronize the offering of descriptor chains. While the descriptor table
+	// and available ring are synchronized on their own as well, this does not
+	// protect us from interleaved calls which could cause reordering.
+	// By locking here, we can ensure that all descriptor chains are made
+	// available to the device in the same order as this method was called.
+	//sq.offerMutex.Lock()
+	//defer sq.offerMutex.Unlock()
+
+	//todo not doing this may break eventually?
+	//not called under lock
+	//if err := sq.descriptorTable.freeDescriptorChain(head); err != nil {
+	//	return fmt.Errorf("free: %w", err)
+	//}
+
+	// Make the descriptor chain available to the device.
+	sq.availableRing.offer([]uint16{head})
+
+	// Notify the device to make it process the updated available ring.
+	if err := sq.kickEventFD.Kick(); err != nil {
+		return fmt.Errorf("notify device: %w", err)
 	}
 
 	return nil
