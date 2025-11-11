@@ -82,22 +82,61 @@ func (r *AvailableRing) Address() uintptr {
 // offer adds the given descriptor chain heads to the available ring and
 // advances the ring index accordingly to make the device process the new
 // descriptor chains.
-func (r *AvailableRing) offer(chainHeads []uint16) {
+func (r *AvailableRing) offerElements(chains []UsedElement) {
 	//always called under lock
 	//r.mu.Lock()
 	//defer r.mu.Unlock()
 
 	// Add descriptor chain heads to the ring.
-	for offset, head := range chainHeads {
+	for offset, x := range chains {
 		// The 16-bit ring index may overflow. This is expected and is not an
 		// issue because the size of the ring array (which equals the queue
 		// size) is always a power of 2 and smaller than the highest possible
 		// 16-bit value.
 		insertIndex := int(*r.ringIndex+uint16(offset)) % len(r.ring)
-		r.ring[insertIndex] = head
+		r.ring[insertIndex] = x.GetHead()
 	}
 
 	// Increase the ring index by the number of descriptor chains added to the
 	// ring.
-	*r.ringIndex += uint16(len(chainHeads))
+	*r.ringIndex += uint16(len(chains))
+}
+
+func (r *AvailableRing) offer(chains []uint16) {
+	//always called under lock
+	//r.mu.Lock()
+	//defer r.mu.Unlock()
+
+	// Add descriptor chain heads to the ring.
+	for offset, x := range chains {
+		// The 16-bit ring index may overflow. This is expected and is not an
+		// issue because the size of the ring array (which equals the queue
+		// size) is always a power of 2 and smaller than the highest possible
+		// 16-bit value.
+		insertIndex := int(*r.ringIndex+uint16(offset)) % len(r.ring)
+		r.ring[insertIndex] = x
+	}
+
+	// Increase the ring index by the number of descriptor chains added to the
+	// ring.
+	*r.ringIndex += uint16(len(chains))
+}
+
+func (r *AvailableRing) offerSingle(x uint16) {
+	//always called under lock
+	//r.mu.Lock()
+	//defer r.mu.Unlock()
+
+	offset := 0
+	// Add descriptor chain heads to the ring.
+
+	// The 16-bit ring index may overflow. This is expected and is not an
+	// issue because the size of the ring array (which equals the queue
+	// size) is always a power of 2 and smaller than the highest possible
+	// 16-bit value.
+	insertIndex := int(*r.ringIndex+uint16(offset)) % len(r.ring)
+	r.ring[insertIndex] = x
+
+	// Increase the ring index by the number of descriptor chains added to the ring.
+	*r.ringIndex += 1
 }

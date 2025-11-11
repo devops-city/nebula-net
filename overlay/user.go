@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
 	"github.com/slackhq/nebula/overlay/virtqueue"
+	"github.com/slackhq/nebula/packet"
 	"github.com/slackhq/nebula/routing"
 )
 
@@ -67,8 +68,8 @@ func (d *UserDevice) Close() error {
 	return nil
 }
 
-func (d *UserDevice) ReadMany(b [][]byte) (int, error) {
-	return d.Read(b[0])
+func (d *UserDevice) ReadMany(b []*packet.VirtIOPacket) (int, error) {
+	return d.Read(b[0].Payload)
 }
 
 func (d *UserDevice) WriteMany(b [][]byte) (int, error) {

@@ -30,9 +30,9 @@ type SplitQueue struct {
 	// chains and put them in the used ring.
 	callEventFD eventfd.EventFD
 
-	// usedChains is a chanel that receives [UsedElement]s for descriptor chains
+	// UsedChains is a chanel that receives [UsedElement]s for descriptor chains
 	// that were used by the device.
-	usedChains chan UsedElement
+	UsedChains chan UsedElement
 
 	// moreFreeDescriptors is a channel that signals when any descriptors were
 	// put back into the free chain of the descriptor table. This is used to
@@ -51,6 +51,7 @@ type SplitQueue struct {
 	itemSize   int
 
 	epoll eventfd.Epoll
+	more  int
 }
 
 // NewSplitQueue allocates a new [SplitQueue] in memory. The given queue size
@@ -131,7 +132,7 @@ func NewSplitQueue(queueSize int) (_ *SplitQueue, err error) {
 	}
 
 	// Initialize channels.
-	sq.usedChains = make(chan UsedElement, queueSize)
+	sq.UsedChains = make(chan UsedElement, queueSize)
 	sq.moreFreeDescriptors = make(chan struct{})
 
 	sq.epoll, err = eventfd.NewEpoll()
@@ -190,20 +191,6 @@ func (sq *SplitQueue) CallEventFD() int {
 	return sq.callEventFD.FD()
 }
 
-// UsedDescriptorChains returns the channel that receives [UsedElement]s for all
-// descriptor chains that were used by the device.
-//
-// Users of the [SplitQueue] should read from this channel, handle the used
-// descriptor chains and free them using [SplitQueue.FreeDescriptorChain] when
-// they're done with them. When this does not happen, the queue will run full
-// and any further calls to [SplitQueue.OfferDescriptorChain] will stall.
-//
-// When [SplitQueue.Close] is called, this channel will be closed as well.
-func (sq *SplitQueue) UsedDescriptorChains() chan UsedElement {
-	sq.ensureInitialized()
-	return sq.usedChains
-}
-
 // startConsumeUsedRing starts a goroutine that runs [consumeUsedRing].
 // A function is returned that can be used to gracefully cancel it. todo rename
 func (sq *SplitQueue) startConsumeUsedRing() func() error {
@@ -225,25 +212,54 @@ func (sq *SplitQueue) BlockAndGetHeads(ctx context.Context) ([]UsedElement, erro
 	var n int
 	var err error
 	for ctx.Err() == nil {
+
 		// Wait for a signal from the device.
 		if n, err = sq.epoll.Block(); err != nil {
 			return nil, fmt.Errorf("wait: %w", err)
 		}
-
 		if n > 0 {
-			out := sq.usedRing.take()
-			_ = sq.epoll.Clear() //???
+			stillNeedToTake, out := sq.usedRing.take(-1)
+			sq.more = stillNeedToTake
+			if stillNeedToTake == 0 {
+				_ = sq.epoll.Clear() //???
+			}
+			return out, nil
+		}
+	}
+	return nil, ctx.Err()
+}
+
+func (sq *SplitQueue) BlockAndGetHeadsCapped(ctx context.Context, maxToTake int) ([]UsedElement, error) {
+	var n int
+	var err error
+	for ctx.Err() == nil {
+
+		//we have leftovers in the fridge
+		if sq.more > 0 {
+			stillNeedToTake, out := sq.usedRing.take(maxToTake)
+			sq.more = stillNeedToTake
+			if stillNeedToTake == 0 {
+				_ = sq.epoll.Clear() //???
+			}
+
+			return out, nil
+		}
+
+		// Wait for a signal from the device.
+		if n, err = sq.epoll.Block(); err != nil {
+			return nil, fmt.Errorf("wait: %w", err)
+		}
+		if n > 0 {
+			stillNeedToTake, out := sq.usedRing.take(maxToTake)
+			sq.more = stillNeedToTake
+			if stillNeedToTake == 0 {
+				_ = sq.epoll.Clear() //???
+			}
 			return out, nil
 		}
 	}
 
 	return nil, ctx.Err()
-}
-
-// blockForMoreDescriptors blocks on a channel waiting for more descriptors to free up.
-// it is its own function so maybe it might show up in pprof
-func (sq *SplitQueue) blockForMoreDescriptors() {
-	<-sq.moreFreeDescriptors
 }
 
 // OfferDescriptorChain offers a descriptor chain to the device which contains a
@@ -271,63 +287,9 @@ func (sq *SplitQueue) blockForMoreDescriptors() {
 // used descriptor chains again using [SplitQueue.FreeDescriptorChain] when
 // they're done with them. When this does not happen, the queue will run full
 // and any further calls to [SplitQueue.OfferDescriptorChain] will stall.
-func (sq *SplitQueue) OfferDescriptorChain(outBuffers [][]byte, numInBuffers int, waitFree bool) (uint16, error) {
+
+func (sq *SplitQueue) OfferInDescriptorChains(numInBuffers int) (uint16, error) {
 	sq.ensureInitialized()
-
-	// TODO change this
-	// Each descriptor can only hold a whole memory page, so split large out
-	// buffers into multiple smaller ones.
-	outBuffers = splitBuffers(outBuffers, sq.pageSize)
-
-	// Synchronize the offering of descriptor chains. While the descriptor table
-	// and available ring are synchronized on their own as well, this does not
-	// protect us from interleaved calls which could cause reordering.
-	// By locking here, we can ensure that all descriptor chains are made
-	// available to the device in the same order as this method was called.
-	sq.offerMutex.Lock()
-	defer sq.offerMutex.Unlock()
-
-	// Create a descriptor chain for the given buffers.
-	var (
-		head uint16
-		err  error
-	)
-	for {
-		head, err = sq.descriptorTable.createDescriptorChain(outBuffers, numInBuffers)
-		if err == nil {
-			break
-		}
-
-		// I don't wanna use errors.Is, it's slow
-		//goland:noinspection GoDirectComparisonOfErrors
-		if err == ErrNotEnoughFreeDescriptors {
-			if waitFree {
-				// Wait for more free descriptors to be put back into the queue.
-				// If the number of free descriptors is still not sufficient, we'll
-				// land here again.
-				sq.blockForMoreDescriptors()
-				continue
-			} else {
-				return 0, err
-			}
-		}
-		return 0, fmt.Errorf("create descriptor chain: %w", err)
-	}
-
-	// Make the descriptor chain available to the device.
-	sq.availableRing.offer([]uint16{head})
-
-	// Notify the device to make it process the updated available ring.
-	if err := sq.kickEventFD.Kick(); err != nil {
-		return head, fmt.Errorf("notify device: %w", err)
-	}
-
-	return head, nil
-}
-
-func (sq *SplitQueue) OfferInDescriptorChains(numInBuffers int, waitFree bool) (uint16, error) {
-	sq.ensureInitialized()
-
 	// Synchronize the offering of descriptor chains. While the descriptor table
 	// and available ring are synchronized on their own as well, this does not
 	// protect us from interleaved calls which could cause reordering.
@@ -350,21 +312,14 @@ func (sq *SplitQueue) OfferInDescriptorChains(numInBuffers int, waitFree bool) (
 		// I don't wanna use errors.Is, it's slow
 		//goland:noinspection GoDirectComparisonOfErrors
 		if err == ErrNotEnoughFreeDescriptors {
-			if waitFree {
-				// Wait for more free descriptors to be put back into the queue.
-				// If the number of free descriptors is still not sufficient, we'll
-				// land here again.
-				sq.blockForMoreDescriptors()
-				continue
-			} else {
-				return 0, err
-			}
+			return 0, err
+		} else {
+			return 0, fmt.Errorf("create descriptor chain: %w", err)
 		}
-		return 0, fmt.Errorf("create descriptor chain: %w", err)
 	}
 
 	// Make the descriptor chain available to the device.
-	sq.availableRing.offer([]uint16{head})
+	sq.availableRing.offerSingle(head)
 
 	// Notify the device to make it process the updated available ring.
 	if err := sq.kickEventFD.Kick(); err != nil {
@@ -374,7 +329,7 @@ func (sq *SplitQueue) OfferInDescriptorChains(numInBuffers int, waitFree bool) (
 	return head, nil
 }
 
-func (sq *SplitQueue) OfferOutDescriptorChains(prepend []byte, outBuffers [][]byte, waitFree bool) ([]uint16, error) {
+func (sq *SplitQueue) OfferOutDescriptorChains(prepend []byte, outBuffers [][]byte) ([]uint16, error) {
 	sq.ensureInitialized()
 
 	// TODO change this
@@ -408,15 +363,11 @@ func (sq *SplitQueue) OfferOutDescriptorChains(prepend []byte, outBuffers [][]by
 			// I don't wanna use errors.Is, it's slow
 			//goland:noinspection GoDirectComparisonOfErrors
 			if err == ErrNotEnoughFreeDescriptors {
-				if waitFree {
-					// Wait for more free descriptors to be put back into the queue.
-					// If the number of free descriptors is still not sufficient, we'll
-					// land here again.
-					sq.blockForMoreDescriptors()
-					continue
-				} else {
-					return nil, err
-				}
+				// Wait for more free descriptors to be put back into the queue.
+				// If the number of free descriptors is still not sufficient, we'll
+				// land here again.
+				<-sq.moreFreeDescriptors
+				continue
 			}
 			return nil, fmt.Errorf("create descriptor chain: %w", err)
 		}
@@ -473,7 +424,7 @@ func (sq *SplitQueue) FreeDescriptorChain(head uint16) error {
 
 	// There is more free room in the descriptor table now.
 	// This is a fire-and-forget signal, so do not block when nobody listens.
-	select {
+	select { //todo eliminate
 	case sq.moreFreeDescriptors <- struct{}{}:
 	default:
 	}
@@ -481,7 +432,7 @@ func (sq *SplitQueue) FreeDescriptorChain(head uint16) error {
 	return nil
 }
 
-func (sq *SplitQueue) FreeAndOfferDescriptorChains(head uint16) error {
+func (sq *SplitQueue) RecycleDescriptorChains(chains []UsedElement) error {
 	sq.ensureInitialized()
 
 	//todo I don't think we need this here?
@@ -500,7 +451,7 @@ func (sq *SplitQueue) FreeAndOfferDescriptorChains(head uint16) error {
 	//}
 
 	// Make the descriptor chain available to the device.
-	sq.availableRing.offer([]uint16{head})
+	sq.availableRing.offerElements(chains)
 
 	// Notify the device to make it process the updated available ring.
 	if err := sq.kickEventFD.Kick(); err != nil {
@@ -524,7 +475,7 @@ func (sq *SplitQueue) Close() error {
 
 		// The stop function blocked until the goroutine ended, so the channel
 		// can now safely be closed.
-		close(sq.usedChains)
+		close(sq.UsedChains)
 
 		// Make sure that this code block is executed only once.
 		sq.stop = nil

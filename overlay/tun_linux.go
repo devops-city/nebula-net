@@ -18,10 +18,11 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
 	"github.com/slackhq/nebula/overlay/vhostnet"
-	"github.com/slackhq/nebula/overlay/virtio"
 	"github.com/slackhq/nebula/overlay/virtqueue"
+	"github.com/slackhq/nebula/packet"
 	"github.com/slackhq/nebula/routing"
 	"github.com/slackhq/nebula/util"
+	"github.com/slackhq/nebula/util/virtio"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -713,15 +714,10 @@ func (t *tun) Close() error {
 	return nil
 }
 
-func (t *tun) ReadMany(p [][]byte) (int, error) {
-	//todo call consumeUsedRing here instead of its own thread
-
-	n, hdr, err := t.vdev.ReceivePacket(p) //we are TXing
+func (t *tun) ReadMany(p []*packet.VirtIOPacket) (int, error) {
+	n, err := t.vdev.ReceivePackets(p) //we are TXing
 	if err != nil {
 		return 0, err
-	}
-	if hdr.NumBuffers > 1 {
-		t.l.WithField("num_buffers", hdr.NumBuffers).Info("wow, lots to TX from tun")
 	}
 	return n, nil
 }
@@ -739,7 +735,7 @@ func (t *tun) Write(b []byte) (int, error) {
 		NumBuffers: 0,
 	}
 
-	err := t.vdev.TransmitPacket(hdr, b)
+	err := t.vdev.TransmitPackets(hdr, [][]byte{b})
 	if err != nil {
 		t.l.WithError(err).Error("Transmitting packet")
 		return 0, err

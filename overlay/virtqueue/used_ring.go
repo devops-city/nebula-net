@@ -87,14 +87,14 @@ func (r *UsedRing) Address() uintptr {
 // take returns all new [UsedElement]s that the device put into the ring and
 // that weren't already returned by a previous call to this method.
 // had a lock, I removed it
-func (r *UsedRing) take() []UsedElement {
+func (r *UsedRing) take(maxToTake int) (int, []UsedElement) {
 	//r.mu.Lock()
 	//defer r.mu.Unlock()
 
 	ringIndex := *r.ringIndex
 	if ringIndex == r.lastIndex {
 		// Nothing new.
-		return nil
+		return 0, nil
 	}
 
 	// Calculate the number new used elements that we can read from the ring.
@@ -102,6 +102,16 @@ func (r *UsedRing) take() []UsedElement {
 	count := int(ringIndex - r.lastIndex)
 	if count < 0 {
 		count += 0xffff
+	}
+
+	stillNeedToTake := 0
+
+	if maxToTake > 0 {
+		stillNeedToTake = count - maxToTake
+		if stillNeedToTake < 0 {
+			stillNeedToTake = 0
+		}
+		count = min(count, maxToTake)
 	}
 
 	// The number of new elements can never exceed the queue size.
@@ -115,5 +125,5 @@ func (r *UsedRing) take() []UsedElement {
 		r.lastIndex++
 	}
 
-	return elems
+	return stillNeedToTake, elems
 }

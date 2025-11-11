@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/slackhq/nebula/overlay/virtio"
 	"github.com/slackhq/nebula/overlay/virtqueue"
+	"github.com/slackhq/nebula/util/virtio"
 	"golang.org/x/sys/unix"
 )
 

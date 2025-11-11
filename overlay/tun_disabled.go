@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/iputil"
 	"github.com/slackhq/nebula/overlay/virtqueue"
+	"github.com/slackhq/nebula/packet"
 	"github.com/slackhq/nebula/routing"
 )
 
@@ -122,8 +123,8 @@ func (t *disabledTun) WriteMany(b [][]byte) (int, error) {
 	return out, nil
 }
 
-func (t *disabledTun) ReadMany(b [][]byte) (int, error) {
-	return t.Read(b[0])
+func (t *disabledTun) ReadMany(b []*packet.VirtIOPacket) (int, error) {
+	return t.Read(b[0].Payload)
 }
 
 func (t *disabledTun) NewMultiQueueReader() (TunDev, error) {

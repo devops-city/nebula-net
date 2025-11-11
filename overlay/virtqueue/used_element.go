@@ -15,3 +15,7 @@ type UsedElement struct {
 	// the buffer described by the descriptor chain.
 	Length uint32
 }
+
+func (u *UsedElement) GetHead() uint16 {
+	return uint16(u.DescriptorIndex)
+}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/netip"
 	"os"
 	"runtime"
@@ -18,7 +17,6 @@ import (
 	"github.com/slackhq/nebula/firewall"
 	"github.com/slackhq/nebula/header"
 	"github.com/slackhq/nebula/overlay"
-	"github.com/slackhq/nebula/overlay/virtio"
 	"github.com/slackhq/nebula/packet"
 	"github.com/slackhq/nebula/udp"
 )
@@ -270,6 +268,7 @@ func (f *Interface) listenOut(q int) {
 
 	ctCache := firewall.NewConntrackCacheTicker(f.conntrackCacheTimeout)
 	lhh := f.lightHouse.NewRequestHandler()
+
 	outPackets := make([]*packet.OutPacket, batch)
 	for i := 0; i < batch; i++ {
 		outPackets[i] = packet.NewOut()
@@ -295,16 +294,15 @@ func (f *Interface) listenOut(q int) {
 					if len(outPackets[i].Segments[j]) > 0 {
 						toSend = append(toSend, outPackets[i].Segments[j])
 					}
-
 				}
-				//toSend = append(toSend, outPackets[i])
-				//toSendCount++
 			}
 		}
 		//toSend = toSend[:toSendCount]
-		_, err := f.readers[q].WriteMany(toSend)
-		if err != nil {
-			f.l.WithError(err).Error("Failed to write messages")
+		if len(toSend) != 0 {
+			_, err := f.readers[q].WriteMany(toSend)
+			if err != nil {
+				f.l.WithError(err).Error("Failed to write messages")
+			}
 		}
 	})
 }
@@ -323,17 +321,15 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 
 	conntrackCache := firewall.NewConntrackCacheTicker(f.conntrackCacheTimeout)
 
-	queues := reader.GetQueues()
-	if len(queues) == 0 {
-		f.l.Fatal("Failed to get queues")
+	packets := make([]*packet.VirtIOPacket, batch)
+	for i := 0; i < batch; i++ {
+		packets[i] = packet.NewVIO()
 	}
-	queue := queues[0]
 
 	for {
 
-		n, err := reader.ReadMany(originalPacket)
+		n, err := reader.ReadMany(packets)
 		//todo!!
-		pkt := originalPacket[virtio.NetHdrSize : n+virtio.NetHdrSize]
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) && f.closed.Load() {
 				return
@@ -344,7 +340,11 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 			os.Exit(2)
 		}
 
-		f.consumeInsidePacket(pkt, fwPacket, nb, out, queueNum, conntrackCache.Get(f.l))
+		//todo vectorize
+		for _, pkt := range packets[:n] {
+			f.consumeInsidePacket(pkt.Payload, fwPacket, nb, out, queueNum, conntrackCache.Get(f.l))
+		}
+
 	}
 }
 
