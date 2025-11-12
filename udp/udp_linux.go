@@ -14,6 +14,7 @@ import (
 	"github.com/rcrowley/go-metrics"
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
+	"github.com/slackhq/nebula/packet"
 	"golang.org/x/sys/unix"
 )
 
@@ -189,6 +190,124 @@ func (u *StdConn) WriteToBatch(b []byte, ip netip.AddrPort) error {
 		return u.writeTo4(b, ip)
 	}
 	return u.writeTo6(b, ip)
+}
+
+func (u *StdConn) Prep(pkt *packet.Packet, addr netip.AddrPort) error {
+	nl, err := u.encodeSockaddr(pkt.Name, addr)
+	if err != nil {
+		return err
+	}
+	pkt.Name = pkt.Name[:nl]
+	pkt.OutLen = len(pkt.Payload)
+	return nil
+}
+
+func (u *StdConn) WriteBatch(pkts []*packet.Packet) (int, error) {
+	if len(pkts) == 0 {
+		return 0, nil
+	}
+
+	msgs := make([]rawMessage, 0, len(pkts)) //todo recycle
+	iovs := make([][]iovec, 0, len(pkts))
+
+	sent := 0
+
+	var mostRecentPkt *packet.Packet
+	//segmenting := false
+	idx := 0
+	for _, pkt := range pkts {
+		if len(pkt.Payload) == 0 || pkt.OutLen == -1 {
+			sent++
+			continue
+		}
+		lastIdx := idx - 1
+		if mostRecentPkt != nil && pkt.CompatibleForSegmentationWith(mostRecentPkt) && msgs[lastIdx].Hdr.Iovlen < 4 {
+
+			msgs[lastIdx].Hdr.Controllen = uint64(len(mostRecentPkt.Control))
+			msgs[lastIdx].Hdr.Control = &mostRecentPkt.Control[0]
+			msgs[lastIdx].Hdr.Iovlen++
+			iovs[lastIdx] = append(iovs[lastIdx], iovec{
+				Base: &pkt.Payload[0],
+				Len:  uint64(len(pkt.Payload)),
+			})
+			mostRecentPkt.SetSegSizeForTX()
+		} else {
+			msgs = append(msgs, rawMessage{})
+			iovs = append(iovs, make([]iovec, 1, 8)) //todo
+			iovs[idx][0] = iovec{
+				Base: &pkt.Payload[0],
+				Len:  uint64(len(pkt.Payload)),
+			}
+
+			msg := &msgs[idx]
+			iov := &iovs[idx][0]
+			idx++
+
+			msg.Hdr.Iov = iov
+			msg.Hdr.Iovlen = 1
+			setRawMessageControl(msg, nil)
+			msg.Hdr.Flags = 0
+
+			msg.Hdr.Name = &pkt.Name[0]
+			msg.Hdr.Namelen = uint32(len(pkt.Name))
+			mostRecentPkt = pkt
+		}
+
+	}
+
+	if len(msgs) == 0 {
+		return sent, nil
+	}
+
+	offset := 0
+	for offset < len(msgs) {
+		n, _, errno := unix.Syscall6(
+			unix.SYS_SENDMMSG,
+			uintptr(u.sysFd),
+			uintptr(unsafe.Pointer(&msgs[offset])),
+			uintptr(len(msgs)-offset),
+			0,
+			0,
+			0,
+		)
+
+		if errno != 0 {
+			if errno == unix.EINTR {
+				continue
+			}
+			return sent + offset, &net.OpError{Op: "sendmmsg", Err: errno}
+		}
+
+		if n == 0 {
+			break
+		}
+		offset += int(n)
+	}
+
+	return sent + len(msgs), nil
+}
+
+func (u *StdConn) encodeSockaddr(dst []byte, addr netip.AddrPort) (uint32, error) {
+	if u.isV4 {
+		if !addr.Addr().Is4() {
+			return 0, fmt.Errorf("Listener is IPv4, but writing to IPv6 remote")
+		}
+		var sa unix.RawSockaddrInet4
+		sa.Family = unix.AF_INET
+		sa.Addr = addr.Addr().As4()
+		binary.BigEndian.PutUint16((*[2]byte)(unsafe.Pointer(&sa.Port))[:], addr.Port())
+		size := unix.SizeofSockaddrInet4
+		copy(dst[:size], (*(*[unix.SizeofSockaddrInet4]byte)(unsafe.Pointer(&sa)))[:])
+		return uint32(size), nil
+	}
+
+	var sa unix.RawSockaddrInet6
+	sa.Family = unix.AF_INET6
+	sa.Addr = addr.Addr().As16()
+	binary.BigEndian.PutUint16((*[2]byte)(unsafe.Pointer(&sa.Port))[:], addr.Port())
+	size := unix.SizeofSockaddrInet6
+	copy(dst[:size], (*(*[unix.SizeofSockaddrInet6]byte)(unsafe.Pointer(&sa)))[:])
+	return uint32(size), nil
 }
 
 func (u *StdConn) writeTo6(b []byte, ip netip.AddrPort) error {

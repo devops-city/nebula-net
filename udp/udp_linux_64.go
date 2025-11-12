@@ -80,3 +80,13 @@ func (u *StdConn) PrepareRawMessages(n int, isV4 bool) ([]rawMessage, []*packet.
 
 	return msgs, packets
 }
+
+func setIovecSlice(iov *iovec, b []byte) {
+	if len(b) == 0 {
+		iov.Base = nil
+		iov.Len = 0
+		return
+	}
+	iov.Base = &b[0]
+	iov.Len = uint64(len(b))
+}

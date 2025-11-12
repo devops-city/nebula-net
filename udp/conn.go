@@ -19,6 +19,8 @@ type Conn interface {
 	ListenOut(r EncReader)
 	WriteTo(b []byte, addr netip.AddrPort) error
 	ReloadConfig(c *config.C)
+	Prep(pkt *packet.Packet, addr netip.AddrPort) error
+	WriteBatch(pkt []*packet.Packet) (int, error)
 	Close() error
 }
 

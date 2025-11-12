@@ -318,15 +318,16 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 	for i := 0; i < batch; i++ {
 		originalPackets[i] = make([]byte, 0xffff)
 	}
-	out := make([]byte, mtu)
 	fwPacket := &firewall.Packet{}
 	nb := make([]byte, 12, 12)
 
 	conntrackCache := firewall.NewConntrackCacheTicker(f.conntrackCacheTimeout)
 
 	packets := make([]*packet.VirtIOPacket, batch)
+	outPackets := make([]*packet.Packet, batch)
 	for i := 0; i < batch; i++ {
 		packets[i] = packet.NewVIO()
+		outPackets[i] = packet.New(false) //todo?
 	}
 
 	for {
@@ -343,9 +344,13 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 			os.Exit(2)
 		}
 
-		//todo vectorize
-		for _, pkt := range packets[:n] {
-			f.consumeInsidePacket(pkt.Payload, fwPacket, nb, out, queueNum, conntrackCache.Get(f.l))
+		for i, pkt := range packets[:n] {
+			outPackets[i].OutLen = -1
+			f.consumeInsidePacket(pkt.Payload, fwPacket, nb, outPackets[i], queueNum, conntrackCache.Get(f.l))
+		}
+		_, err = f.writers[queueNum].WriteBatch(outPackets[:n])
+		if err != nil {
+			f.l.WithError(err).Error("Error while writing outbound packets")
 		}
 
 	}

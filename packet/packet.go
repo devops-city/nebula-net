@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"iter"
 	"net/netip"
+	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -71,6 +73,32 @@ func (p *Packet) updateCtrl(ctrlLen int) {
 func (p *Packet) Update(ctrlLen int) {
 	p.OutLen = -1
 	p.updateCtrl(ctrlLen)
+}
+
+func (p *Packet) SetSegSizeForTX() {
+	p.SegSize = len(p.Payload)
+	hdr := (*unix.Cmsghdr)(unsafe.Pointer(&p.Control[0]))
+	hdr.Level = unix.SOL_UDP
+	hdr.Type = unix.UDP_SEGMENT
+	hdr.SetLen(syscall.CmsgLen(2))
+	//setCmsgLen(hdr, unix.CmsgLen(2))
+	binary.NativeEndian.PutUint16(p.Control[unix.CmsgLen(0):unix.CmsgLen(0)+2], uint16(p.SegSize))
+	//data := p.Control[syscall.CmsgSpace(0)-syscall.CmsgSpace(2)+syscall.SizeofCmsghdr:]
+	//binary.NativeEndian.PutUint16(data, uint16(p.SegSize))
+}
+
+func (p *Packet) CompatibleForSegmentationWith(otherP *Packet) bool {
+	//same dest
+
+	if p.AddrPort() != otherP.AddrPort() {
+		return false //todo more efficient?
+	}
+
+	//same body len
+	if len(p.Payload) != len(otherP.Payload) {
+		return false //todo technically you can cram one extra in
+	}
+	return true
 }
 
 func (p *Packet) Segments() iter.Seq[[]byte] {
