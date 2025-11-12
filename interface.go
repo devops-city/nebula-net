@@ -22,6 +22,7 @@ import (
 )
 
 const mtu = 9001
+const batch = 1024 //todo config!
 
 type InterfaceConfig struct {
 	HostMap            *HostMap
@@ -264,8 +265,6 @@ func (f *Interface) listenOut(q int) {
 		li = f.outside
 	}
 
-	const batch = 64 //todo
-
 	ctCache := firewall.NewConntrackCacheTicker(f.conntrackCacheTimeout)
 	lhh := f.lightHouse.NewRequestHandler()
 
@@ -313,7 +312,6 @@ func (f *Interface) listenOut(q int) {
 func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 	runtime.LockOSThread()
 
-	const batch = 128
 	originalPackets := make([][]byte, batch) //todo batch config
 	for i := 0; i < batch; i++ {
 		originalPackets[i] = make([]byte, 0xffff)
