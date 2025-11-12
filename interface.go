@@ -313,7 +313,7 @@ func (f *Interface) listenOut(q int) {
 func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 	runtime.LockOSThread()
 
-	const batch = 64
+	const batch = 128
 	originalPackets := make([][]byte, batch) //todo batch config
 	for i := 0; i < batch; i++ {
 		originalPackets[i] = make([]byte, 0xffff)

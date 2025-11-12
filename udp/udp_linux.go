@@ -211,7 +211,7 @@ func (u *StdConn) WriteBatch(pkts []*packet.Packet) (int, error) {
 	iovs := make([][]iovec, 0, len(pkts))
 
 	sent := 0
-
+	const maxIovLen = 48
 	var mostRecentPkt *packet.Packet
 	//segmenting := false
 	idx := 0
@@ -221,7 +221,7 @@ func (u *StdConn) WriteBatch(pkts []*packet.Packet) (int, error) {
 			continue
 		}
 		lastIdx := idx - 1
-		if mostRecentPkt != nil && pkt.CompatibleForSegmentationWith(mostRecentPkt) && msgs[lastIdx].Hdr.Iovlen < 4 {
+		if mostRecentPkt != nil && pkt.CompatibleForSegmentationWith(mostRecentPkt) && msgs[lastIdx].Hdr.Iovlen < maxIovLen { //todo math this more good
 
 			msgs[lastIdx].Hdr.Controllen = uint64(len(mostRecentPkt.Control))
 			msgs[lastIdx].Hdr.Control = &mostRecentPkt.Control[0]
@@ -233,7 +233,7 @@ func (u *StdConn) WriteBatch(pkts []*packet.Packet) (int, error) {
 			mostRecentPkt.SetSegSizeForTX()
 		} else {
 			msgs = append(msgs, rawMessage{})
-			iovs = append(iovs, make([]iovec, 1, 8)) //todo
+			iovs = append(iovs, make([]iovec, 1, maxIovLen)) //todo
 			iovs[idx][0] = iovec{
 				Base: &pkt.Payload[0],
 				Len:  uint64(len(pkt.Payload)),
