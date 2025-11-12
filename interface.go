@@ -301,7 +301,7 @@ func (f *Interface) listenOut(q int) {
 		for i := 0; i < len(toSend); i += batch {
 			x := min(len(toSend[i:]), batch)
 			toSendThisTime := toSend[i : i+x]
-			_, err := f.readers[q].WriteMany(toSendThisTime)
+			_, err := f.readers[q].WriteMany(toSendThisTime, q)
 			if err != nil {
 				f.l.WithError(err).Error("Failed to write messages")
 			}
@@ -332,7 +332,7 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 
 	for {
 
-		n, err := reader.ReadMany(packets)
+		n, err := reader.ReadMany(packets, queueNum)
 		//todo!!
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) && f.closed.Load() {

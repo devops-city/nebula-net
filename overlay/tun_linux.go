@@ -10,7 +10,6 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -29,7 +28,7 @@ import (
 type tun struct {
 	file        *os.File
 	fd          int
-	vdev        *vhostnet.Device
+	vdev        []*vhostnet.Device
 	Device      string
 	vpnNetworks []netip.Prefix
 	MaxMTU      int
@@ -108,7 +107,7 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 	var req ifReq
 	req.Flags = uint16(unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_TUN_EXCL | unix.IFF_VNET_HDR)
 	if multiqueue {
-		//req.Flags |= unix.IFF_MULTI_QUEUE
+		req.Flags |= unix.IFF_MULTI_QUEUE
 	}
 	copy(req.Name[:], c.GetString("tun.dev", ""))
 	if err = ioctl(uintptr(fd), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&req))); err != nil {
@@ -135,17 +134,6 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 		return nil, fmt.Errorf("set offloads: %w", err)
 	}
 
-	//name := strings.Trim(c.GetString("tun.dev", ""), "\x00")
-	//tundev, err := tuntap.NewDevice(
-	//	tuntap.WithName(name),
-	//	tuntap.WithDeviceType(tuntap.DeviceTypeTUN),                          //todo wtf
-	//	tuntap.WithVirtioNetHdr(true),                                        //todo hmm
-	//	tuntap.WithOffloads(unix.TUN_F_CSUM|unix.TUN_F_USO4|unix.TUN_F_USO6), //todo
-	//)
-	//if err != nil {
-	//	return nil, err
-	//}
-
 	t, err := newTunGeneric(c, l, file, vpnNetworks)
 	if err != nil {
 		return nil, err
@@ -160,7 +148,7 @@ func newTun(c *config.C, l *logrus.Logger, vpnNetworks []netip.Prefix, multiqueu
 	if err != nil {
 		return nil, err
 	}
-	t.vdev = vdev
+	t.vdev = []*vhostnet.Device{vdev}
 
 	return t, nil
 }
@@ -259,22 +247,29 @@ func (t *tun) reload(c *config.C, initial bool) error {
 }
 
 func (t *tun) NewMultiQueueReader() (TunDev, error) {
-	//fd, err := unix.Open("/dev/net/tun", os.O_RDWR, 0)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//
-	//var req ifReq
-	//req.Flags = uint16(unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_MULTI_QUEUE)
-	//copy(req.Name[:], t.Device)
-	//if err = ioctl(uintptr(fd), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&req))); err != nil {
-	//	return nil, err
-	//}
-	//
-	//file := os.NewFile(uintptr(fd), "/dev/net/tun")
+	fd, err := unix.Open("/dev/net/tun", os.O_RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
 
-	//return file, nil
-	return nil, syscall.ENOTSUP
+	var req ifReq
+	req.Flags = uint16(unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_MULTI_QUEUE)
+	copy(req.Name[:], t.Device)
+	if err = ioctl(uintptr(fd), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&req))); err != nil {
+		return nil, err
+	}
+
+	vdev, err := vhostnet.NewDevice(
+		vhostnet.WithBackendFD(fd),
+		vhostnet.WithQueueSize(8192), //todo config
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	t.vdev = append(t.vdev, vdev)
+
+	return t, nil
 }
 
 func (t *tun) RoutesFor(ip netip.Addr) routing.Gateways {
@@ -694,8 +689,10 @@ func (t *tun) Close() error {
 		close(t.routeChan)
 	}
 
-	if t.vdev != nil {
-		_ = t.vdev.Close()
+	for _, v := range t.vdev {
+		if v != nil {
+			_ = v.Close()
+		}
 	}
 
 	if t.file != nil {
@@ -709,8 +706,8 @@ func (t *tun) Close() error {
 	return nil
 }
 
-func (t *tun) ReadMany(p []*packet.VirtIOPacket) (int, error) {
-	n, err := t.vdev.ReceivePackets(p) //we are TXing
+func (t *tun) ReadMany(p []*packet.VirtIOPacket, q int) (int, error) {
+	n, err := t.vdev[q].ReceivePackets(p) //we are TXing
 	if err != nil {
 		return 0, err
 	}
@@ -730,7 +727,7 @@ func (t *tun) Write(b []byte) (int, error) {
 		NumBuffers: 0,
 	}
 
-	err := t.vdev.TransmitPackets(hdr, [][]byte{b})
+	err := t.vdev[0].TransmitPackets(hdr, [][]byte{b})
 	if err != nil {
 		t.l.WithError(err).Error("Transmitting packet")
 		return 0, err
@@ -738,7 +735,7 @@ func (t *tun) Write(b []byte) (int, error) {
 	return maximum, nil
 }
 
-func (t *tun) WriteMany(b [][]byte) (int, error) {
+func (t *tun) WriteMany(b [][]byte, q int) (int, error) {
 	maximum := len(b) //we are RXing
 	if maximum == 0 {
 		return 0, nil
@@ -753,7 +750,7 @@ func (t *tun) WriteMany(b [][]byte) (int, error) {
 		NumBuffers: 0,
 	}
 
-	err := t.vdev.TransmitPackets(hdr, b)
+	err := t.vdev[q].TransmitPackets(hdr, b)
 	if err != nil {
 		t.l.WithError(err).Error("Transmitting packet")
 		return 0, err

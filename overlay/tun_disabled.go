@@ -111,7 +111,7 @@ func (t *disabledTun) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func (t *disabledTun) WriteMany(b [][]byte) (int, error) {
+func (t *disabledTun) WriteMany(b [][]byte, _ int) (int, error) {
 	out := 0
 	for i := range b {
 		x, err := t.Write(b[i])
@@ -123,7 +123,7 @@ func (t *disabledTun) WriteMany(b [][]byte) (int, error) {
 	return out, nil
 }
 
-func (t *disabledTun) ReadMany(b []*packet.VirtIOPacket) (int, error) {
+func (t *disabledTun) ReadMany(b []*packet.VirtIOPacket, _ int) (int, error) {
 	return t.Read(b[0].Payload)
 }
 

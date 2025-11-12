@@ -77,7 +77,7 @@ func NewDevice(options ...Option) (*Device, error) {
 
 	// Advertise the supported features. This isn't much for now.
 	// TODO: Add feature options and implement proper feature negotiation.
-	getFeatures, err := vhost.GetFeatures(dev.controlFD)
+	getFeatures, err := vhost.GetFeatures(dev.controlFD) //0x1033D008000 but why
 	if err != nil {
 		return nil, fmt.Errorf("get features: %w", err)
 	}
