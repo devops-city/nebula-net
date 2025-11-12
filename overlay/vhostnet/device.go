@@ -252,7 +252,7 @@ func (dev *Device) TransmitPackets(vnethdr virtio.NetHdr, packets [][]byte) erro
 	//todo surely there's something better to do here
 
 	for {
-		txedChains, err := dev.TransmitQueue.BlockAndGetHeads(context.TODO())
+		txedChains, err := dev.TransmitQueue.BlockAndGetHeadsCapped(context.TODO(), len(chainIndexes))
 		if err != nil {
 			return err
 		} else if len(txedChains) == 0 {
@@ -358,8 +358,6 @@ func (dev *Device) ReceivePackets(out []*packet.VirtIOPacket) (int, error) {
 	chainsIdx := 0
 	for numPackets = 0; chainsIdx < len(chains); numPackets++ {
 		if numPackets >= len(out) {
-			//dev.extraRx = chains[chainsIdx:]
-			//return numPackets, nil
 			return numPackets, fmt.Errorf("dropping %d packets, no room", len(chains)-numPackets)
 		}
 		numChains, err := dev.processChains(out[numPackets], chains[chainsIdx:])
@@ -370,15 +368,9 @@ func (dev *Device) ReceivePackets(out []*packet.VirtIOPacket) (int, error) {
 	}
 
 	// Now that we have copied all buffers, we can recycle the used descriptor chains
-	if err := dev.ReceiveQueue.RecycleDescriptorChains(chains); err != nil {
+	if err = dev.ReceiveQueue.RecycleDescriptorChains(chains); err != nil {
 		return 0, err
 	}
-
-	//if we don't churn chains, maybe we don't need this?
-	// It's advised to always keep the rx queue fully populated with available buffers which the device can write new packets into.
-	//if err := dev.refillReceiveQueue(); err != nil {
-	//	return 0, virtio.NetHdr{}, fmt.Errorf("refill receive queue: %w", err)
-	//}
 
 	return numPackets, nil
 }

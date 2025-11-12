@@ -215,23 +215,24 @@ func (sq *SplitQueue) BlockAndGetHeadsCapped(ctx context.Context, maxToTake int)
 		if sq.more > 0 {
 			stillNeedToTake, out := sq.usedRing.take(maxToTake)
 			sq.more = stillNeedToTake
-			if stillNeedToTake == 0 {
-				_ = sq.epoll.Clear() //???
-			}
-
 			return out, nil
 		}
+		//look inside the fridge
+		stillNeedToTake, out := sq.usedRing.take(maxToTake)
+		if len(out) > 0 {
+			sq.more = stillNeedToTake
+			return out, nil
+		}
+		//fridge is empty I guess
 
 		// Wait for a signal from the device.
 		if n, err = sq.epoll.Block(); err != nil {
 			return nil, fmt.Errorf("wait: %w", err)
 		}
 		if n > 0 {
-			stillNeedToTake, out := sq.usedRing.take(maxToTake)
+			_ = sq.epoll.Clear() //???
+			stillNeedToTake, out = sq.usedRing.take(maxToTake)
 			sq.more = stillNeedToTake
-			if stillNeedToTake == 0 {
-				_ = sq.epoll.Clear() //???
-			}
 			return out, nil
 		}
 	}

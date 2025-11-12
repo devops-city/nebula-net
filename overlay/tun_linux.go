@@ -18,7 +18,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
 	"github.com/slackhq/nebula/overlay/vhostnet"
-	"github.com/slackhq/nebula/overlay/virtqueue"
 	"github.com/slackhq/nebula/packet"
 	"github.com/slackhq/nebula/routing"
 	"github.com/slackhq/nebula/util"
@@ -50,10 +49,6 @@ type tun struct {
 
 func (t *tun) Networks() []netip.Prefix {
 	return t.vpnNetworks
-}
-
-func (t *tun) GetQueues() []*virtqueue.SplitQueue {
-	return []*virtqueue.SplitQueue{t.vdev.ReceiveQueue, t.vdev.TransmitQueue}
 }
 
 type ifReq struct {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/slackhq/nebula/config"
-	"github.com/slackhq/nebula/overlay/virtqueue"
 	"github.com/slackhq/nebula/packet"
 	"github.com/slackhq/nebula/util"
 )
@@ -19,7 +18,6 @@ type TunDev interface {
 	io.WriteCloser
 	ReadMany([]*packet.VirtIOPacket) (int, error)
 	WriteMany([][]byte) (int, error)
-	GetQueues() []*virtqueue.SplitQueue
 }
 
 // TODO: We may be able to remove routines
