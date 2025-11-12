@@ -32,8 +32,6 @@ type Device struct {
 
 	ReceiveQueue  *virtqueue.SplitQueue
 	TransmitQueue *virtqueue.SplitQueue
-
-	extraRx []virtqueue.UsedElement
 }
 
 // NewDevice initializes a new vhost networking device within the
@@ -279,7 +277,6 @@ func (dev *Device) TransmitPackets(vnethdr virtio.NetHdr, packets [][]byte) erro
 		}
 	}
 
-	//todo blocking here suxxxx
 	// Wait for the packet to have been transmitted.
 	for i := range chainIndexes {
 
@@ -297,7 +294,7 @@ func (dev *Device) TransmitPackets(vnethdr virtio.NetHdr, packets [][]byte) erro
 // processChains processes as many chains as needed to create one packet. The number of processed chains is returned.
 func (dev *Device) processChains(pkt *packet.VirtIOPacket, chains []virtqueue.UsedElement) (int, error) {
 	//read first element to see how many descriptors we need:
-	pkt.Payload = pkt.Payload[:cap(pkt.Payload)]
+	pkt.Reset()
 	n, err := dev.ReceiveQueue.GetDescriptorChainContents(uint16(chains[0].DescriptorIndex), pkt.Payload, int(chains[0].Length)) //todo
 	if err != nil {
 		return 0, err
@@ -321,7 +318,7 @@ func (dev *Device) processChains(pkt *packet.VirtIOPacket, chains []virtqueue.Us
 	}
 
 	//shift the buffer out of out:
-	copy(pkt.Payload, pkt.Payload[virtio.NetHdrSize:])
+	pkt.Payload = pkt.Payload[virtio.NetHdrSize:]
 
 	cursor := n - virtio.NetHdrSize
 

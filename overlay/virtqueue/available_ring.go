@@ -47,8 +47,6 @@ type AvailableRing struct {
 	// avoid issues in case a device may try to access it, contrary to the
 	// virtio specification.
 	usedEvent *uint16
-
-	//mu sync.Mutex
 }
 
 // newAvailableRing creates an available ring that uses the given underlying

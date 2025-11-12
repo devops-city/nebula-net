@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 	"syscall"
 
 	"github.com/slackhq/nebula/overlay/eventfd"
@@ -35,11 +34,8 @@ type SplitQueue struct {
 	// used buffer notifications. It blocks until the goroutine ended.
 	stop func() error
 
-	// offerMutex is used to synchronize calls to
-	// [SplitQueue.OfferDescriptorChain].
-	offerMutex sync.Mutex
-	pageSize   int
-	itemSize   int
+	pageSize int
+	itemSize int
 
 	epoll eventfd.Epoll
 	more  int
@@ -140,25 +136,21 @@ func NewSplitQueue(queueSize int) (_ *SplitQueue, err error) {
 // Size returns the size of this queue, which is the number of entries/buffers
 // this queue can hold.
 func (sq *SplitQueue) Size() int {
-	sq.ensureInitialized()
 	return sq.size
 }
 
 // DescriptorTable returns the [DescriptorTable] behind this queue.
 func (sq *SplitQueue) DescriptorTable() *DescriptorTable {
-	sq.ensureInitialized()
 	return sq.descriptorTable
 }
 
 // AvailableRing returns the [AvailableRing] behind this queue.
 func (sq *SplitQueue) AvailableRing() *AvailableRing {
-	sq.ensureInitialized()
 	return sq.availableRing
 }
 
 // UsedRing returns the [UsedRing] behind this queue.
 func (sq *SplitQueue) UsedRing() *UsedRing {
-	sq.ensureInitialized()
 	return sq.usedRing
 }
 
@@ -166,7 +158,6 @@ func (sq *SplitQueue) UsedRing() *UsedRing {
 // The returned file descriptor should be used with great care to not interfere
 // with this implementation.
 func (sq *SplitQueue) KickEventFD() int {
-	sq.ensureInitialized()
 	return sq.kickEventFD.FD()
 }
 
@@ -174,7 +165,6 @@ func (sq *SplitQueue) KickEventFD() int {
 // The returned file descriptor should be used with great care to not interfere
 // with this implementation.
 func (sq *SplitQueue) CallEventFD() int {
-	sq.ensureInitialized()
 	return sq.callEventFD.FD()
 }
 
@@ -276,15 +266,6 @@ func (sq *SplitQueue) BlockAndGetHeadsCapped(ctx context.Context, maxToTake int)
 // and any further calls to [SplitQueue.OfferDescriptorChain] will stall.
 
 func (sq *SplitQueue) OfferInDescriptorChains(numInBuffers int) (uint16, error) {
-	sq.ensureInitialized()
-	// Synchronize the offering of descriptor chains. While the descriptor table
-	// and available ring are synchronized on their own as well, this does not
-	// protect us from interleaved calls which could cause reordering.
-	// By locking here, we can ensure that all descriptor chains are made
-	// available to the device in the same order as this method was called.
-	sq.offerMutex.Lock()
-	defer sq.offerMutex.Unlock()
-
 	// Create a descriptor chain for the given buffers.
 	var (
 		head uint16
@@ -317,20 +298,10 @@ func (sq *SplitQueue) OfferInDescriptorChains(numInBuffers int) (uint16, error) 
 }
 
 func (sq *SplitQueue) OfferOutDescriptorChains(prepend []byte, outBuffers [][]byte) ([]uint16, error) {
-	sq.ensureInitialized()
-
 	// TODO change this
 	// Each descriptor can only hold a whole memory page, so split large out
 	// buffers into multiple smaller ones.
 	outBuffers = splitBuffers(outBuffers, sq.pageSize)
-
-	// Synchronize the offering of descriptor chains. While the descriptor table
-	// and available ring are synchronized on their own as well, this does not
-	// protect us from interleaved calls which could cause reordering.
-	// By locking here, we can ensure that all descriptor chains are made
-	// available to the device in the same order as this method was called.
-	sq.offerMutex.Lock()
-	defer sq.offerMutex.Unlock()
 
 	chains := make([]uint16, len(outBuffers))
 
@@ -384,12 +355,10 @@ func (sq *SplitQueue) OfferOutDescriptorChains(prepend []byte, outBuffers [][]by
 // longer using them. They must not be accessed after
 // [SplitQueue.FreeDescriptorChain] has been called.
 func (sq *SplitQueue) GetDescriptorChain(head uint16) (outBuffers, inBuffers [][]byte, err error) {
-	sq.ensureInitialized()
 	return sq.descriptorTable.getDescriptorChain(head)
 }
 
 func (sq *SplitQueue) GetDescriptorChainContents(head uint16, out []byte, maxLen int) (int, error) {
-	sq.ensureInitialized()
 	return sq.descriptorTable.getDescriptorChainContents(head, out, maxLen)
 }
 
@@ -412,17 +381,6 @@ func (sq *SplitQueue) FreeDescriptorChain(head uint16) error {
 }
 
 func (sq *SplitQueue) RecycleDescriptorChains(chains []UsedElement) error {
-	sq.ensureInitialized()
-
-	//todo I don't think we need this here?
-	// Synchronize the offering of descriptor chains. While the descriptor table
-	// and available ring are synchronized on their own as well, this does not
-	// protect us from interleaved calls which could cause reordering.
-	// By locking here, we can ensure that all descriptor chains are made
-	// available to the device in the same order as this method was called.
-	//sq.offerMutex.Lock()
-	//defer sq.offerMutex.Unlock()
-
 	//todo not doing this may break eventually?
 	//not called under lock
 	//if err := sq.descriptorTable.freeDescriptorChain(head); err != nil {

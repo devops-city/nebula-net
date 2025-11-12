@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -54,8 +53,6 @@ type DescriptorTable struct {
 	bufferBase uintptr
 	bufferSize int
 	itemSize   int
-
-	mu sync.Mutex
 }
 
 // newDescriptorTable creates a descriptor table that uses the given underlying
@@ -126,9 +123,6 @@ func (dt *DescriptorTable) initializeDescriptors() error {
 		return fmt.Errorf("allocate buffer memory for descriptors: %w", err)
 	}
 
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
-
 	// Store the base for cleanup later
 	dt.bufferBase = uintptr(basePtr)
 	dt.bufferSize = totalSize
@@ -155,9 +149,6 @@ func (dt *DescriptorTable) initializeDescriptors() error {
 // collect potential errors before returning them.
 // The descriptor table should no longer be used after calling this.
 func (dt *DescriptorTable) releaseBuffers() error {
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
-
 	for i := range dt.descriptors {
 		descriptor := &dt.descriptors[i]
 		descriptor.address = 0
@@ -208,9 +199,6 @@ func (dt *DescriptorTable) createDescriptorChain(outBuffers [][]byte, numInBuffe
 	if numDesc < 1 {
 		return 0, ErrDescriptorChainEmpty
 	}
-
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
 
 	// Do we still have enough free descriptors?
 	if numDesc > dt.freeNum {
@@ -309,9 +297,6 @@ func (dt *DescriptorTable) getDescriptorChain(head uint16) (outBuffers, inBuffer
 		return nil, nil, fmt.Errorf("%w: index out of range", ErrInvalidDescriptorChain)
 	}
 
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
-
 	// Iterate over the chain. The iteration is limited to the queue size to
 	// avoid ending up in an endless loop when things go very wrong.
 	next := head
@@ -353,9 +338,6 @@ func (dt *DescriptorTable) getDescriptorChainContents(head uint16, out []byte, m
 	if int(head) > len(dt.descriptors) {
 		return 0, fmt.Errorf("%w: index out of range", ErrInvalidDescriptorChain)
 	}
-
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
 
 	// Iterate over the chain. The iteration is limited to the queue size to
 	// avoid ending up in an endless loop when things go very wrong.
@@ -430,9 +412,6 @@ func (dt *DescriptorTable) freeDescriptorChain(head uint16) error {
 	if int(head) > len(dt.descriptors) {
 		return fmt.Errorf("%w: index out of range", ErrInvalidDescriptorChain)
 	}
-
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
 
 	// Iterate over the chain. The iteration is limited to the queue size to
 	// avoid ending up in an endless loop when things go very wrong.
