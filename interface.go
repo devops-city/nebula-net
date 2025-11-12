@@ -287,7 +287,7 @@ func (f *Interface) listenOut(q int) {
 			outPackets[i].SegCounter = 0
 		}
 
-		f.readOutsidePacketsMany(pkts, outPackets, h, fwPacket, lhh, nb, q, ctCache.Get(f.l))
+		f.readOutsidePacketsMany(pkts, outPackets, h, fwPacket, lhh, nb, q, ctCache.Get(f.l), time.Now())
 		for i := range pkts {
 			if pkts[i].OutLen != -1 {
 				for j := 0; j < outPackets[i].SegCounter; j++ {
@@ -344,9 +344,10 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 			os.Exit(2)
 		}
 
+		now := time.Now()
 		for i, pkt := range packets[:n] {
 			outPackets[i].OutLen = -1
-			f.consumeInsidePacket(pkt.Payload, fwPacket, nb, outPackets[i], queueNum, conntrackCache.Get(f.l))
+			f.consumeInsidePacket(pkt.Payload, fwPacket, nb, outPackets[i], queueNum, conntrackCache.Get(f.l), now)
 		}
 		_, err = f.writers[queueNum].WriteBatch(outPackets[:n])
 		if err != nil {

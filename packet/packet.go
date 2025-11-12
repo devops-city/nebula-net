@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"iter"
 	"net/netip"
+	"slices"
 	"syscall"
 	"unsafe"
 
@@ -23,7 +24,6 @@ type Packet struct {
 
 	wasSegmented bool
 	isV4         bool
-	//Addr    netip.AddrPort
 }
 
 func New(isV4 bool) *Packet {
@@ -81,17 +81,13 @@ func (p *Packet) SetSegSizeForTX() {
 	hdr.Level = unix.SOL_UDP
 	hdr.Type = unix.UDP_SEGMENT
 	hdr.SetLen(syscall.CmsgLen(2))
-	//setCmsgLen(hdr, unix.CmsgLen(2))
 	binary.NativeEndian.PutUint16(p.Control[unix.CmsgLen(0):unix.CmsgLen(0)+2], uint16(p.SegSize))
-	//data := p.Control[syscall.CmsgSpace(0)-syscall.CmsgSpace(2)+syscall.SizeofCmsghdr:]
-	//binary.NativeEndian.PutUint16(data, uint16(p.SegSize))
 }
 
 func (p *Packet) CompatibleForSegmentationWith(otherP *Packet) bool {
 	//same dest
-
-	if p.AddrPort() != otherP.AddrPort() {
-		return false //todo more efficient?
+	if !slices.Equal(p.Name, otherP.Name) {
+		return false
 	}
 
 	//same body len
@@ -113,33 +109,5 @@ func (p *Packet) Segments() iter.Seq[[]byte] {
 				return
 			}
 		}
-
-		//if p.SegSize > 0 && p.SegSize < len(p.Payload) {
-		//
-		//} else {
-		//	f.readOutsidePackets(p.Addr, nil, result2[:0], p.Payload, h, fwPacket2, lhh, nb2, i, conntrackCache.Get(f.l))
-		//}
-
 	}
 }
-
-//type Pool struct {
-//	pool sync.Pool
-//}
-//
-//var bigPool = &Pool{
-//	pool: sync.Pool{New: func() any { return New() }},
-//}
-//
-//func GetPool() *Pool {
-//	return bigPool
-//}
-//
-//func (p *Pool) Get() *Packet {
-//	return p.pool.Get().(*Packet)
-//}
-//
-//func (p *Pool) Put(x *Packet) {
-//	x.Payload = x.Payload[:Size]
-//	p.pool.Put(x)
-//}

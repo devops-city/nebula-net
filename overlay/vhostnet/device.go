@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 
 	"github.com/slackhq/nebula/overlay/vhost"
 	"github.com/slackhq/nebula/overlay/virtqueue"
@@ -249,10 +250,6 @@ func (dev *Device) TransmitPackets(vnethdr virtio.NetHdr, packets [][]byte) erro
 		return fmt.Errorf("offer descriptor chain: %w", err)
 	}
 	//todo surely there's something better to do here
-	doneYet := map[uint16]bool{}
-	for _, chain := range chainIndexes {
-		doneYet[chain] = false
-	}
 
 	for {
 		txedChains, err := dev.TransmitQueue.BlockAndGetHeads(context.TODO())
@@ -261,31 +258,27 @@ func (dev *Device) TransmitPackets(vnethdr virtio.NetHdr, packets [][]byte) erro
 		} else if len(txedChains) == 0 {
 			continue //todo will this ever exit?
 		}
-		for c := range txedChains {
-			doneYet[txedChains[c].GetHead()] = true
+		for _, c := range txedChains {
+			idx := slices.Index(chainIndexes, c.GetHead())
+			if idx < 0 {
+				continue
+			} else {
+				_ = dev.TransmitQueue.FreeDescriptorChain(chainIndexes[idx])
+				chainIndexes[idx] = 0 //todo I hope this works
+			}
 		}
 		done := true //optimism!
-		for _, x := range doneYet {
-			if !x {
+		for _, x := range chainIndexes {
+			if x != 0 {
 				done = false
 				break
 			}
 		}
 
 		if done {
-			break
+			return nil
 		}
 	}
-
-	// Wait for the packet to have been transmitted.
-	for i := range chainIndexes {
-
-		if err = dev.TransmitQueue.FreeDescriptorChain(chainIndexes[i]); err != nil {
-			return fmt.Errorf("free descriptor chain: %w", err)
-		}
-	}
-
-	return nil
 }
 
 // TODO: Make above methods cancelable by taking a context.Context argument?
