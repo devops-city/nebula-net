@@ -363,6 +363,10 @@ func (sq *SplitQueue) GetDescriptorChainContents(head uint16, out []byte, maxLen
 	return sq.descriptorTable.getDescriptorChainContents(head, out, maxLen)
 }
 
+func (sq *SplitQueue) GetDescriptorInbuffers(head uint16, inBuffers *[][]byte) error {
+	return sq.descriptorTable.getDescriptorInbuffers(head, inBuffers)
+}
+
 // FreeDescriptorChain frees the descriptor chain with the given head index.
 // The head index must be one that was returned by a previous call to
 // [SplitQueue.OfferDescriptorChain] and the descriptor chain must not have been
@@ -381,7 +385,7 @@ func (sq *SplitQueue) FreeDescriptorChain(head uint16) error {
 	return nil
 }
 
-func (sq *SplitQueue) RecycleDescriptorChains(chains []UsedElement) error {
+func (sq *SplitQueue) RecycleDescriptorChains(chains []uint16, kick bool) error {
 	//todo not doing this may break eventually?
 	//not called under lock
 	//if err := sq.descriptorTable.freeDescriptorChain(head); err != nil {
@@ -389,11 +393,13 @@ func (sq *SplitQueue) RecycleDescriptorChains(chains []UsedElement) error {
 	//}
 
 	// Make the descriptor chain available to the device.
-	sq.availableRing.offerElements(chains)
+	sq.availableRing.offer(chains)
 
 	// Notify the device to make it process the updated available ring.
-	if err := sq.kickEventFD.Kick(); err != nil {
-		return fmt.Errorf("notify device: %w", err)
+	if kick {
+		if err := sq.kickEventFD.Kick(); err != nil {
+			return fmt.Errorf("notify device: %w", err)
+		}
 	}
 
 	return nil

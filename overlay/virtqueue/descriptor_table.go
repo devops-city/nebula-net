@@ -334,6 +334,48 @@ func (dt *DescriptorTable) getDescriptorChain(head uint16) (outBuffers, inBuffer
 	return
 }
 
+func (dt *DescriptorTable) getDescriptorInbuffers(head uint16, inBuffers *[][]byte) error {
+	if int(head) > len(dt.descriptors) {
+		return fmt.Errorf("%w: index out of range", ErrInvalidDescriptorChain)
+	}
+
+	// Iterate over the chain. The iteration is limited to the queue size to
+	// avoid ending up in an endless loop when things go very wrong.
+	next := head
+	for range len(dt.descriptors) {
+		if next == dt.freeHeadIndex {
+			return fmt.Errorf("%w: must not be part of the free chain", ErrInvalidDescriptorChain)
+		}
+
+		desc := &dt.descriptors[next]
+
+		// The descriptor address points to memory not managed by Go, so this
+		// conversion is safe. See https://github.com/golang/go/issues/58625
+		//goland:noinspection GoVetUnsafePointer
+		bs := unsafe.Slice((*byte)(unsafe.Pointer(desc.address)), desc.length)
+
+		if desc.flags&descriptorFlagWritable == 0 {
+			return fmt.Errorf("there should not be an outbuffer in %d", head)
+		} else {
+			*inBuffers = append(*inBuffers, bs)
+		}
+
+		// Is this the tail of the chain?
+		if desc.flags&descriptorFlagHasNext == 0 {
+			break
+		}
+
+		// Detect loops.
+		if desc.next == head {
+			return fmt.Errorf("%w: contains a loop", ErrInvalidDescriptorChain)
+		}
+
+		next = desc.next
+	}
+
+	return nil
+}
+
 func (dt *DescriptorTable) getDescriptorChainContents(head uint16, out []byte, maxLen int) (int, error) {
 	if int(head) > len(dt.descriptors) {
 		return 0, fmt.Errorf("%w: index out of range", ErrInvalidDescriptorChain)

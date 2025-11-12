@@ -331,7 +331,6 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 	}
 
 	for {
-
 		n, err := reader.ReadMany(packets, queueNum)
 		//todo!!
 		if err != nil {
@@ -348,12 +347,12 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 		for i, pkt := range packets[:n] {
 			outPackets[i].OutLen = -1
 			f.consumeInsidePacket(pkt.Payload, fwPacket, nb, outPackets[i], queueNum, conntrackCache.Get(f.l), now)
+			_ = pkt.Recycle(i == (n - 1))
 		}
 		_, err = f.writers[queueNum].WriteBatch(outPackets[:n])
 		if err != nil {
 			f.l.WithError(err).Error("Error while writing outbound packets")
 		}
-
 	}
 }
 

@@ -288,17 +288,22 @@ func (dev *Device) TransmitPackets(vnethdr virtio.NetHdr, packets [][]byte) erro
 func (dev *Device) processChains(pkt *packet.VirtIOPacket, chains []virtqueue.UsedElement) (int, error) {
 	//read first element to see how many descriptors we need:
 	pkt.Reset()
-	n, err := dev.ReceiveQueue.GetDescriptorChainContents(uint16(chains[0].DescriptorIndex), pkt.Payload, int(chains[0].Length)) //todo
+
+	err := dev.ReceiveQueue.GetDescriptorInbuffers(uint16(chains[0].DescriptorIndex), &pkt.ChainRefs)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("get descriptor chain: %w", err)
 	}
+	if len(pkt.ChainRefs) == 0 {
+		return 1, nil
+	}
+
 	// The specification requires that the first descriptor chain starts
 	// with a virtio-net header. It is not clear, whether it is also
 	// required to be fully contained in the first buffer of that
 	// descriptor chain, but it is reasonable to assume that this is
 	// always the case.
 	// The decode method already does the buffer length check.
-	if err = pkt.Header.Decode(pkt.Payload[0:]); err != nil {
+	if err = pkt.Header.Decode(pkt.ChainRefs[0][0:]); err != nil {
 		// The device misbehaved. There is no way we can gracefully
 		// recover from this, because we don't know how many of the
 		// following descriptor chains belong to this packet.
@@ -309,33 +314,43 @@ func (dev *Device) processChains(pkt *packet.VirtIOPacket, chains []virtqueue.Us
 	if int(pkt.Header.NumBuffers) > len(chains) {
 		return 0, fmt.Errorf("number of buffers is greater than number of chains %d", len(chains))
 	}
+	if int(pkt.Header.NumBuffers) != 1 {
+		return 0, fmt.Errorf("too smol-brain to handle more than one chain right now: %d chains", len(chains))
+	}
+	if chains[0].Length > 4000 {
+		//todo!
+		return 1, fmt.Errorf("too big packet length: %d", chains[0].Length)
+	}
 
 	//shift the buffer out of out:
-	pkt.Payload = pkt.Payload[virtio.NetHdrSize:]
+	pkt.Payload = pkt.ChainRefs[0][virtio.NetHdrSize:chains[0].Length]
+	pkt.Chains = append(pkt.Chains, uint16(chains[0].DescriptorIndex))
+	pkt.Recycler = dev.ReceiveQueue.RecycleDescriptorChains
+	return 1, nil
 
-	cursor := n - virtio.NetHdrSize
-
-	if uint32(n) >= chains[0].Length && pkt.Header.NumBuffers == 1 {
-		pkt.Payload = pkt.Payload[:chains[0].Length-virtio.NetHdrSize]
-		return 1, nil
-	}
-
-	i := 1
-	// we used chain 0 already
-	for i = 1; i < len(chains); i++ {
-		n, err = dev.ReceiveQueue.GetDescriptorChainContents(uint16(chains[i].DescriptorIndex), pkt.Payload[cursor:], int(chains[i].Length))
-		if err != nil {
-			// When this fails we may miss to free some descriptor chains. We
-			// could try to mitigate this by deferring the freeing somehow, but
-			// it's not worth the hassle. When this method fails, the queue will
-			// be in a broken state anyway.
-			return i, fmt.Errorf("get descriptor chain: %w", err)
-		}
-		cursor += n
-	}
-	//todo this has to be wrong
-	pkt.Payload = pkt.Payload[:cursor]
-	return i, nil
+	//cursor := n - virtio.NetHdrSize
+	//
+	//if uint32(n) >= chains[0].Length && pkt.Header.NumBuffers == 1 {
+	//	pkt.Payload = pkt.Payload[:chains[0].Length-virtio.NetHdrSize]
+	//	return 1, nil
+	//}
+	//
+	//i := 1
+	//// we used chain 0 already
+	//for i = 1; i < len(chains); i++ {
+	//	n, err = dev.ReceiveQueue.GetDescriptorChainContents(uint16(chains[i].DescriptorIndex), pkt.Payload[cursor:], int(chains[i].Length))
+	//	if err != nil {
+	//		// When this fails we may miss to free some descriptor chains. We
+	//		// could try to mitigate this by deferring the freeing somehow, but
+	//		// it's not worth the hassle. When this method fails, the queue will
+	//		// be in a broken state anyway.
+	//		return i, fmt.Errorf("get descriptor chain: %w", err)
+	//	}
+	//	cursor += n
+	//}
+	////todo this has to be wrong
+	//pkt.Payload = pkt.Payload[:cursor]
+	//return i, nil
 }
 
 func (dev *Device) ReceivePackets(out []*packet.VirtIOPacket) (int, error) {
@@ -368,9 +383,9 @@ func (dev *Device) ReceivePackets(out []*packet.VirtIOPacket) (int, error) {
 	}
 
 	// Now that we have copied all buffers, we can recycle the used descriptor chains
-	if err = dev.ReceiveQueue.RecycleDescriptorChains(chains); err != nil {
-		return 0, err
-	}
+	//if err = dev.ReceiveQueue.RecycleDescriptorChains(chains); err != nil {
+	//	return 0, err
+	//}
 
 	return numPackets, nil
 }
