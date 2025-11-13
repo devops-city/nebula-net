@@ -34,7 +34,6 @@ type SplitQueue struct {
 	// used buffer notifications. It blocks until the goroutine ended.
 	stop func() error
 
-	pageSize int
 	itemSize int
 
 	epoll eventfd.Epoll
@@ -49,10 +48,15 @@ func NewSplitQueue(queueSize int) (_ *SplitQueue, err error) {
 		return nil, err
 	}
 
+	itemSize := os.Getpagesize() * 4 //todo config
+
+	if itemSize%os.Getpagesize() != 0 {
+		return nil, errors.New("split queue size must be multiple of os.Getpagesize()")
+	}
+
 	sq := SplitQueue{
 		size:     queueSize,
-		pageSize: os.Getpagesize(),
-		itemSize: os.Getpagesize(), //todo config
+		itemSize: itemSize,
 	}
 
 	// Clean up a partially initialized queue when something fails.
@@ -302,7 +306,7 @@ func (sq *SplitQueue) OfferOutDescriptorChains(prepend []byte, outBuffers [][]by
 	// TODO change this
 	// Each descriptor can only hold a whole memory page, so split large out
 	// buffers into multiple smaller ones.
-	outBuffers = splitBuffers(outBuffers, sq.pageSize)
+	outBuffers = splitBuffers(outBuffers, sq.itemSize)
 
 	chains := make([]uint16, len(outBuffers))
 
