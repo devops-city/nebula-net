@@ -91,11 +91,13 @@ func NewDevice(options ...Option) (*Device, error) {
 		return nil, fmt.Errorf("set features: %w", err)
 	}
 
+	itemSize := os.Getpagesize() * 4 //todo config
+
 	// Initialize and register the queues needed for the networking device.
-	if dev.ReceiveQueue, err = createQueue(dev.controlFD, receiveQueueIndex, opts.queueSize); err != nil {
+	if dev.ReceiveQueue, err = createQueue(dev.controlFD, receiveQueueIndex, opts.queueSize, itemSize); err != nil {
 		return nil, fmt.Errorf("create receive queue: %w", err)
 	}
-	if dev.TransmitQueue, err = createQueue(dev.controlFD, transmitQueueIndex, opts.queueSize); err != nil {
+	if dev.TransmitQueue, err = createQueue(dev.controlFD, transmitQueueIndex, opts.queueSize, itemSize); err != nil {
 		return nil, fmt.Errorf("create transmit queue: %w", err)
 	}
 
@@ -203,12 +205,12 @@ func (dev *Device) ensureInitialized() {
 
 // createQueue creates a new virtqueue and registers it with the vhost device
 // using the given index.
-func createQueue(controlFD int, queueIndex int, queueSize int) (*virtqueue.SplitQueue, error) {
+func createQueue(controlFD int, queueIndex int, queueSize int, itemSize int) (*virtqueue.SplitQueue, error) {
 	var (
 		queue *virtqueue.SplitQueue
 		err   error
 	)
-	if queue, err = virtqueue.NewSplitQueue(queueSize); err != nil {
+	if queue, err = virtqueue.NewSplitQueue(queueSize, itemSize); err != nil {
 		return nil, fmt.Errorf("create virtqueue: %w", err)
 	}
 	if err = vhost.RegisterQueue(controlFD, uint32(queueIndex), queue); err != nil {

@@ -32,7 +32,7 @@ func TestDescriptorTable_DescriptorChains(t *testing.T) {
 	// Use a very short queue size to not make this test overly verbose.
 	const queueSize = 8
 
-	pageSize := os.Getpagesize()
+	pageSize := os.Getpagesize() * 2
 
 	// Initialize descriptor table.
 	dt := DescriptorTable{

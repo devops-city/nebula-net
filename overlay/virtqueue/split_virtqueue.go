@@ -43,12 +43,10 @@ type SplitQueue struct {
 // NewSplitQueue allocates a new [SplitQueue] in memory. The given queue size
 // specifies the number of entries/buffers the queue can hold. This also affects
 // the memory consumption.
-func NewSplitQueue(queueSize int) (_ *SplitQueue, err error) {
+func NewSplitQueue(queueSize int, itemSize int) (_ *SplitQueue, err error) {
 	if err = CheckQueueSize(queueSize); err != nil {
 		return nil, err
 	}
-
-	itemSize := os.Getpagesize() * 4 //todo config
 
 	if itemSize%os.Getpagesize() != 0 {
 		return nil, errors.New("split queue size must be multiple of os.Getpagesize()")
