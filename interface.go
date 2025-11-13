@@ -93,6 +93,12 @@ type Interface struct {
 	messageMetrics      *MessageMetrics
 	cachedPacketMetrics *cachedPacketMetrics
 
+	listenInN  int
+	listenOutN int
+
+	listenInMetric  metrics.Histogram
+	listenOutMetric metrics.Histogram
+
 	l *logrus.Logger
 }
 
@@ -197,6 +203,8 @@ func NewInterface(ctx context.Context, c *InterfaceConfig) (*Interface, error) {
 
 		l: c.l,
 	}
+	ifce.listenInMetric = metrics.GetOrRegisterHistogram("vhost.listenIn.n", nil, metrics.NewExpDecaySample(1028, 0.015))
+	ifce.listenOutMetric = metrics.GetOrRegisterHistogram("vhost.listenOut.n", nil, metrics.NewExpDecaySample(1028, 0.015))
 
 	ifce.tryPromoteEvery.Store(c.tryPromoteEvery)
 	ifce.reQueryEvery.Store(c.reQueryEvery)
@@ -296,8 +304,13 @@ func (f *Interface) listenOut(q int) {
 				}
 			}
 		}
+		n := len(toSend)
+		if f.l.Level == logrus.DebugLevel {
+			f.listenOutMetric.Update(int64(n))
+		}
+		f.listenOutN = n
 		//toSend = toSend[:toSendCount]
-		for i := 0; i < len(toSend); i += batch {
+		for i := 0; i < n; i += batch {
 			x := min(len(toSend[i:]), batch)
 			toSendThisTime := toSend[i : i+x]
 			_, err := f.readers[q].WriteMany(toSendThisTime, q)
@@ -330,6 +343,10 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 
 	for {
 		n, err := reader.ReadMany(packets, queueNum)
+		if f.l.Level == logrus.DebugLevel {
+			f.listenInMetric.Update(int64(n))
+		}
+		f.listenInN = n
 		//todo!!
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) && f.closed.Load() {
@@ -488,6 +505,11 @@ func (f *Interface) emitStats(ctx context.Context, i time.Duration) {
 			} else {
 				certMaxVersion.Update(int64(certState.v1Cert.Version()))
 			}
+			if f.l.Level != logrus.DebugLevel {
+				f.listenInMetric.Update(int64(f.listenInN))
+				f.listenOutMetric.Update(int64(f.listenOutN))
+			}
+
 		}
 	}
 }
