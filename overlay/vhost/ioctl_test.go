@@ -4,7 +4,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/hetznercloud/virtio-go/vhost"
+	"github.com/slackhq/nebula/overlay/vhost"
 	"github.com/stretchr/testify/assert"
 )
 
