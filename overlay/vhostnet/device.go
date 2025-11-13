@@ -358,7 +358,7 @@ func (dev *Device) ReceivePackets(out []*packet.VirtIOPacket) (int, error) {
 	var chains []virtqueue.UsedElement
 	var err error
 	//if len(dev.extraRx) == 0 {
-	chains, err = dev.ReceiveQueue.BlockAndGetHeadsCapped(context.TODO(), 64) //todo config batch
+	chains, err = dev.ReceiveQueue.BlockAndGetHeadsCapped(context.TODO(), len(out))
 	if err != nil {
 		return 0, err
 	}

@@ -325,10 +325,6 @@ func (f *Interface) listenOut(q int) {
 func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 	runtime.LockOSThread()
 
-	originalPackets := make([][]byte, batch) //todo batch config
-	for i := 0; i < batch; i++ {
-		originalPackets[i] = make([]byte, 0xffff)
-	}
 	fwPacket := &firewall.Packet{}
 	nb := make([]byte, 12, 12)
 
@@ -343,10 +339,7 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 
 	for {
 		n, err := reader.ReadMany(packets, queueNum)
-		if f.l.Level == logrus.DebugLevel {
-			f.listenInMetric.Update(int64(n))
-		}
-		f.listenInN = n
+
 		//todo!!
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) && f.closed.Load() {
@@ -357,6 +350,11 @@ func (f *Interface) listenIn(reader overlay.TunDev, queueNum int) {
 			// This only seems to happen when something fatal happens to the fd, so exit.
 			os.Exit(2)
 		}
+
+		if f.l.Level == logrus.DebugLevel {
+			f.listenInMetric.Update(int64(n))
+		}
+		f.listenInN = n
 
 		now := time.Now()
 		for i, pkt := range packets[:n] {
