@@ -9,13 +9,13 @@ type VirtIOPacket struct {
 	Header    virtio.NetHdr
 	Chains    []uint16
 	ChainRefs [][]byte
-	// RecycleDescriptorChains(chains []uint16, kick bool) error
+	// OfferDescriptorChains(chains []uint16, kick bool) error
 	Recycler func([]uint16, bool) error
 }
 
 func NewVIO() *VirtIOPacket {
 	out := new(VirtIOPacket)
-	out.Payload = make([]byte, Size)
+	out.Payload = nil
 	out.ChainRefs = make([][]byte, 0, 4)
 	out.Chains = make([]uint16, 0, 8)
 	return out
@@ -36,4 +36,14 @@ func (v *VirtIOPacket) Recycle(lastOne bool) error {
 	}
 	v.Reset()
 	return nil
+}
+
+type VirtIOTXPacket struct {
+	VirtIOPacket
+}
+
+func NewVIOTX(isV4 bool) *VirtIOTXPacket {
+	out := new(VirtIOTXPacket)
+	out.VirtIOPacket = *NewVIO()
+	return out
 }

@@ -281,6 +281,106 @@ func (dt *DescriptorTable) createDescriptorChain(outBuffers [][]byte, numInBuffe
 	return head, nil
 }
 
+func (dt *DescriptorTable) CreateDescriptorForOutputs() (uint16, error) {
+	//todo just fill the damn table
+	// Do we still have enough free descriptors?
+
+	if 1 > dt.freeNum {
+		return 0, ErrNotEnoughFreeDescriptors
+	}
+
+	// Above validation ensured that there is at least one free descriptor, so
+	// the free descriptor chain head should be valid.
+	if dt.freeHeadIndex == noFreeHead {
+		panic("free descriptor chain head is unset but there should be free descriptors")
+	}
+
+	// To avoid having to iterate over the whole table to find the descriptor
+	// pointing to the head just to replace the free head, we instead always
+	// create descriptor chains from the descriptors coming after the head.
+	// This way we only have to touch the head as a last resort, when all other
+	// descriptors are already used.
+	head := dt.descriptors[dt.freeHeadIndex].next
+	desc := &dt.descriptors[head]
+	next := desc.next
+
+	checkUnusedDescriptorLength(head, desc)
+
+	// Give the device the maximum available number of bytes to write into.
+	desc.length = uint32(dt.itemSize)
+	desc.flags = 0 // descriptorFlagWritable
+	desc.next = 0  // Not necessary to clear this, it's just for looks.
+
+	dt.freeNum -= 1
+
+	if dt.freeNum == 0 {
+		// The last descriptor in the chain should be the free chain head
+		// itself.
+		if next != dt.freeHeadIndex {
+			panic("descriptor chain takes up all free descriptors but does not end with the free chain head")
+		}
+
+		// When this new chain takes up all remaining descriptors, we no longer
+		// have a free chain.
+		dt.freeHeadIndex = noFreeHead
+	} else {
+		// We took some descriptors out of the free chain, so make sure to close
+		// the circle again.
+		dt.descriptors[dt.freeHeadIndex].next = next
+	}
+
+	return head, nil
+}
+
+func (dt *DescriptorTable) createDescriptorForInputs() (uint16, error) {
+	// Do we still have enough free descriptors?
+	if 1 > dt.freeNum {
+		return 0, ErrNotEnoughFreeDescriptors
+	}
+
+	// Above validation ensured that there is at least one free descriptor, so
+	// the free descriptor chain head should be valid.
+	if dt.freeHeadIndex == noFreeHead {
+		panic("free descriptor chain head is unset but there should be free descriptors")
+	}
+
+	// To avoid having to iterate over the whole table to find the descriptor
+	// pointing to the head just to replace the free head, we instead always
+	// create descriptor chains from the descriptors coming after the head.
+	// This way we only have to touch the head as a last resort, when all other
+	// descriptors are already used.
+	head := dt.descriptors[dt.freeHeadIndex].next
+	desc := &dt.descriptors[head]
+	next := desc.next
+
+	checkUnusedDescriptorLength(head, desc)
+
+	// Give the device the maximum available number of bytes to write into.
+	desc.length = uint32(dt.itemSize)
+	desc.flags = descriptorFlagWritable
+	desc.next = 0 // Not necessary to clear this, it's just for looks.
+
+	dt.freeNum -= 1
+
+	if dt.freeNum == 0 {
+		// The last descriptor in the chain should be the free chain head
+		// itself.
+		if next != dt.freeHeadIndex {
+			panic("descriptor chain takes up all free descriptors but does not end with the free chain head")
+		}
+
+		// When this new chain takes up all remaining descriptors, we no longer
+		// have a free chain.
+		dt.freeHeadIndex = noFreeHead
+	} else {
+		// We took some descriptors out of the free chain, so make sure to close
+		// the circle again.
+		dt.descriptors[dt.freeHeadIndex].next = next
+	}
+
+	return head, nil
+}
+
 // TODO: Implement a zero-copy variant of createDescriptorChain?
 
 // getDescriptorChain returns the device-readable buffers (out buffers) and
@@ -332,6 +432,20 @@ func (dt *DescriptorTable) getDescriptorChain(head uint16) (outBuffers, inBuffer
 	}
 
 	return
+}
+
+func (dt *DescriptorTable) getDescriptorItem(head uint16) ([]byte, error) {
+	if int(head) > len(dt.descriptors) {
+		return nil, fmt.Errorf("%w: index out of range", ErrInvalidDescriptorChain)
+	}
+
+	desc := &dt.descriptors[head] //todo this is a pretty nasty hack with no checks
+
+	// The descriptor address points to memory not managed by Go, so this
+	// conversion is safe. See https://github.com/golang/go/issues/58625
+	//goland:noinspection GoVetUnsafePointer
+	bs := unsafe.Slice((*byte)(unsafe.Pointer(desc.address)), desc.length)
+	return bs, nil
 }
 
 func (dt *DescriptorTable) getDescriptorInbuffers(head uint16, inBuffers *[][]byte) error {

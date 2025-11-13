@@ -419,7 +419,12 @@ func (f *Interface) readOutsidePacketsMany(packets []*packet.Packet, out []*pack
 			f.handleHostRoaming(hostinfo, ip)
 
 			f.connectionManager.In(hostinfo)
+
 		}
+		//_, err := f.readers[q].WriteOne(out[i], false, q)
+		//if err != nil {
+		//	f.l.WithError(err).Error("Failed to write packet")
+		//}
 	}
 }
 
@@ -675,14 +680,20 @@ func (f *Interface) decrypt(hostinfo *HostInfo, mc uint64, out []byte, packet []
 func (f *Interface) decryptToTunDelayWrite(hostinfo *HostInfo, messageCounter uint64, out *packet.OutPacket, pkt *packet.Packet, inSegment []byte, fwPacket *firewall.Packet, nb []byte, q int, localCache firewall.ConntrackCache, now time.Time) bool {
 	var err error
 
-	out.Segments[out.SegCounter] = out.Segments[out.SegCounter][:0]
-	out.Segments[out.SegCounter], err = hostinfo.ConnectionState.dKey.DecryptDanger(out.Segments[out.SegCounter], inSegment[:header.Len], inSegment[header.Len:], messageCounter, nb)
+	seg, err := f.readers[q].AllocSeg(out, q)
+	if err != nil {
+		f.l.WithError(err).Errorln("decryptToTunDelayWrite: failed to allocate segment")
+		return false
+	}
+
+	out.SegmentPayloads[seg] = out.SegmentPayloads[seg][:0]
+	out.SegmentPayloads[seg], err = hostinfo.ConnectionState.dKey.DecryptDanger(out.SegmentPayloads[seg], inSegment[:header.Len], inSegment[header.Len:], messageCounter, nb)
 	if err != nil {
 		hostinfo.logger(f.l).WithError(err).Error("Failed to decrypt packet")
 		return false
 	}
 
-	err = newPacket(out.Segments[out.SegCounter], true, fwPacket)
+	err = newPacket(out.SegmentPayloads[seg], true, fwPacket)
 	if err != nil {
 		hostinfo.logger(f.l).WithError(err).WithField("packet", out).
 			Warnf("Error while validating inbound packet")
@@ -699,7 +710,7 @@ func (f *Interface) decryptToTunDelayWrite(hostinfo *HostInfo, messageCounter ui
 	if dropReason != nil {
 		// NOTE: We give `packet` as the `out` here since we already decrypted from it and we don't need it anymore
 		// This gives us a buffer to build the reject packet in
-		f.rejectOutside(out.Segments[out.SegCounter], hostinfo.ConnectionState, hostinfo, nb, inSegment, q)
+		f.rejectOutside(out.SegmentPayloads[seg], hostinfo.ConnectionState, hostinfo, nb, inSegment, q)
 		if f.l.Level >= logrus.DebugLevel {
 			hostinfo.logger(f.l).WithField("fwPacket", fwPacket).
 				WithField("reason", dropReason).
@@ -710,7 +721,7 @@ func (f *Interface) decryptToTunDelayWrite(hostinfo *HostInfo, messageCounter ui
 
 	f.connectionManager.In(hostinfo)
 	pkt.OutLen += len(inSegment)
-	out.SegCounter++
+	out.Segments[seg] = out.Segments[seg][:len(out.SegmentHeaders[seg])+len(out.SegmentPayloads[seg])]
 	return true
 }
 

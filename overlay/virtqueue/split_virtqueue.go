@@ -208,6 +208,32 @@ func (sq *SplitQueue) BlockAndGetHeads(ctx context.Context) ([]UsedElement, erro
 	return nil, ctx.Err()
 }
 
+func (sq *SplitQueue) TakeSingle(ctx context.Context) (uint16, error) {
+	var n int
+	var err error
+	for ctx.Err() == nil {
+		out, ok := sq.usedRing.takeOne()
+		if ok {
+			return out, nil
+		}
+		// Wait for a signal from the device.
+		if n, err = sq.epoll.Block(); err != nil {
+			return 0, fmt.Errorf("wait: %w", err)
+		}
+
+		if n > 0 {
+			out, ok = sq.usedRing.takeOne()
+			if ok {
+				_ = sq.epoll.Clear() //???
+				return out, nil
+			} else {
+				continue //???
+			}
+		}
+	}
+	return 0, ctx.Err()
+}
+
 func (sq *SplitQueue) BlockAndGetHeadsCapped(ctx context.Context, maxToTake int) ([]UsedElement, error) {
 	var n int
 	var err error
@@ -268,14 +294,14 @@ func (sq *SplitQueue) BlockAndGetHeadsCapped(ctx context.Context, maxToTake int)
 // they're done with them. When this does not happen, the queue will run full
 // and any further calls to [SplitQueue.OfferDescriptorChain] will stall.
 
-func (sq *SplitQueue) OfferInDescriptorChains(numInBuffers int) (uint16, error) {
+func (sq *SplitQueue) OfferInDescriptorChains() (uint16, error) {
 	// Create a descriptor chain for the given buffers.
 	var (
 		head uint16
 		err  error
 	)
 	for {
-		head, err = sq.descriptorTable.createDescriptorChain(nil, numInBuffers)
+		head, err = sq.descriptorTable.createDescriptorForInputs()
 		if err == nil {
 			break
 		}
@@ -361,6 +387,11 @@ func (sq *SplitQueue) GetDescriptorChain(head uint16) (outBuffers, inBuffers [][
 	return sq.descriptorTable.getDescriptorChain(head)
 }
 
+func (sq *SplitQueue) GetDescriptorItem(head uint16) ([]byte, error) {
+	sq.descriptorTable.descriptors[head].length = uint32(sq.descriptorTable.itemSize)
+	return sq.descriptorTable.getDescriptorItem(head)
+}
+
 func (sq *SplitQueue) GetDescriptorChainContents(head uint16, out []byte, maxLen int) (int, error) {
 	return sq.descriptorTable.getDescriptorChainContents(head, out, maxLen)
 }
@@ -387,7 +418,12 @@ func (sq *SplitQueue) FreeDescriptorChain(head uint16) error {
 	return nil
 }
 
-func (sq *SplitQueue) RecycleDescriptorChains(chains []uint16, kick bool) error {
+func (sq *SplitQueue) SetDescSize(head uint16, sz int) {
+	//not called under lock
+	sq.descriptorTable.descriptors[int(head)].length = uint32(sz)
+}
+
+func (sq *SplitQueue) OfferDescriptorChains(chains []uint16, kick bool) error {
 	//todo not doing this may break eventually?
 	//not called under lock
 	//if err := sq.descriptorTable.freeDescriptorChain(head); err != nil {
@@ -399,11 +435,16 @@ func (sq *SplitQueue) RecycleDescriptorChains(chains []uint16, kick bool) error 
 
 	// Notify the device to make it process the updated available ring.
 	if kick {
-		if err := sq.kickEventFD.Kick(); err != nil {
-			return fmt.Errorf("notify device: %w", err)
-		}
+		return sq.Kick()
 	}
 
+	return nil
+}
+
+func (sq *SplitQueue) Kick() error {
+	if err := sq.kickEventFD.Kick(); err != nil {
+		return fmt.Errorf("notify device: %w", err)
+	}
 	return nil
 }
 

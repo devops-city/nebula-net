@@ -295,29 +295,16 @@ func (f *Interface) listenOut(q int) {
 		}
 
 		f.readOutsidePacketsMany(pkts, outPackets, h, fwPacket, lhh, nb, q, ctCache.Get(f.l), time.Now())
-		for i := range pkts {
-			if pkts[i].OutLen != -1 {
-				for j := 0; j < outPackets[i].SegCounter; j++ {
-					if len(outPackets[i].Segments[j]) > 0 {
-						toSend = append(toSend, outPackets[i].Segments[j])
-					}
-				}
-			}
+		//we opportunistically tx, but try to also send stragglers
+		if _, err := f.readers[q].WriteMany(outPackets, q); err != nil {
+			f.l.WithError(err).Error("Failed to send packets")
 		}
-		n := len(toSend)
-		if f.l.Level == logrus.DebugLevel {
-			f.listenOutMetric.Update(int64(n))
-		}
-		f.listenOutN = n
-		//toSend = toSend[:toSendCount]
-		for i := 0; i < n; i += batch {
-			x := min(len(toSend[i:]), batch)
-			toSendThisTime := toSend[i : i+x]
-			_, err := f.readers[q].WriteMany(toSendThisTime, q)
-			if err != nil {
-				f.l.WithError(err).Error("Failed to write messages")
-			}
-		}
+		//todo I broke this
+		//n := len(toSend)
+		//if f.l.Level == logrus.DebugLevel {
+		//	f.listenOutMetric.Update(int64(n))
+		//}
+		//f.listenOutN = n
 
 	})
 }

@@ -127,3 +127,58 @@ func (r *UsedRing) take(maxToTake int) (int, []UsedElement) {
 
 	return stillNeedToTake, elems
 }
+
+func (r *UsedRing) takeOne() (uint16, bool) {
+	//r.mu.Lock()
+	//defer r.mu.Unlock()
+
+	ringIndex := *r.ringIndex
+	if ringIndex == r.lastIndex {
+		// Nothing new.
+		return 0xffff, false
+	}
+
+	// Calculate the number new used elements that we can read from the ring.
+	// The ring index may wrap, so special handling for that case is needed.
+	count := int(ringIndex - r.lastIndex)
+	if count < 0 {
+		count += 0xffff
+	}
+
+	// The number of new elements can never exceed the queue size.
+	if count > len(r.ring) {
+		panic("used ring contains more new elements than the ring is long")
+	}
+
+	if count == 0 {
+		return 0xffff, false
+	}
+
+	out := r.ring[r.lastIndex%uint16(len(r.ring))].GetHead()
+	r.lastIndex++
+
+	return out, true
+}
+
+// InitOfferSingle is only used to pre-fill the used queue at startup, and should not be used if the device is running!
+func (r *UsedRing) InitOfferSingle(x uint16, size int) {
+	//always called under lock
+	//r.mu.Lock()
+	//defer r.mu.Unlock()
+
+	offset := 0
+	// Add descriptor chain heads to the ring.
+
+	// The 16-bit ring index may overflow. This is expected and is not an
+	// issue because the size of the ring array (which equals the queue
+	// size) is always a power of 2 and smaller than the highest possible
+	// 16-bit value.
+	insertIndex := int(*r.ringIndex+uint16(offset)) % len(r.ring)
+	r.ring[insertIndex] = UsedElement{
+		DescriptorIndex: uint32(x),
+		Length:          uint32(size),
+	}
+
+	// Increase the ring index by the number of descriptor chains added to the ring.
+	*r.ringIndex += 1
+}

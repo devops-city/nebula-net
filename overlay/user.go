@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"fmt"
 	"io"
 	"net/netip"
 
@@ -71,14 +72,14 @@ func (d *UserDevice) ReadMany(b []*packet.VirtIOPacket, _ int) (int, error) {
 	return d.Read(b[0].Payload)
 }
 
-func (d *UserDevice) WriteMany(b [][]byte, _ int) (int, error) {
-	out := 0
-	for i := range b {
-		x, err := d.Write(b[i])
-		if err != nil {
-			return out, err
-		}
-		out += x
-	}
-	return out, nil
+func (d *UserDevice) AllocSeg(pkt *packet.OutPacket, q int) (int, error) {
+	return 0, fmt.Errorf("user: AllocSeg not implemented")
+}
+
+func (d *UserDevice) WriteOne(x *packet.OutPacket, kick bool, q int) (int, error) {
+	return 0, fmt.Errorf("user: WriteOne not implemented")
+}
+
+func (d *UserDevice) WriteMany(x []*packet.OutPacket, q int) (int, error) {
+	return 0, fmt.Errorf("user: WriteMany not implemented")
 }

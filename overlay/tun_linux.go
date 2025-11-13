@@ -717,17 +717,15 @@ func (t *tun) ReadMany(p []*packet.VirtIOPacket, q int) (int, error) {
 func (t *tun) Write(b []byte) (int, error) {
 	maximum := len(b) //we are RXing
 
-	hdr := virtio.NetHdr{ //todo
-		Flags:      unix.VIRTIO_NET_HDR_F_DATA_VALID,
-		GSOType:    unix.VIRTIO_NET_HDR_GSO_NONE,
-		HdrLen:     0,
-		GSOSize:    0,
-		CsumStart:  0,
-		CsumOffset: 0,
-		NumBuffers: 0,
+	//todo garbagey
+	out := packet.NewOut()
+	x, err := t.AllocSeg(out, 0)
+	if err != nil {
+		return 0, err
 	}
+	copy(out.SegmentPayloads[x], b)
+	err = t.vdev[0].TransmitPacket(out, true)
 
-	err := t.vdev[0].TransmitPackets(hdr, [][]byte{b})
 	if err != nil {
 		t.l.WithError(err).Error("Transmitting packet")
 		return 0, err
@@ -735,22 +733,30 @@ func (t *tun) Write(b []byte) (int, error) {
 	return maximum, nil
 }
 
-func (t *tun) WriteMany(b [][]byte, q int) (int, error) {
-	maximum := len(b) //we are RXing
+func (t *tun) AllocSeg(pkt *packet.OutPacket, q int) (int, error) {
+	idx, buf, err := t.vdev[q].GetPacketForTx()
+	if err != nil {
+		return 0, err
+	}
+	x := pkt.UseSegment(idx, buf)
+	return x, nil
+}
+
+func (t *tun) WriteOne(x *packet.OutPacket, kick bool, q int) (int, error) {
+	if err := t.vdev[q].TransmitPacket(x, kick); err != nil {
+		t.l.WithError(err).Error("Transmitting packet")
+		return 0, err
+	}
+	return 1, nil
+}
+
+func (t *tun) WriteMany(x []*packet.OutPacket, q int) (int, error) {
+	maximum := len(x) //we are RXing
 	if maximum == 0 {
 		return 0, nil
 	}
-	hdr := virtio.NetHdr{ //todo
-		Flags:      unix.VIRTIO_NET_HDR_F_DATA_VALID,
-		GSOType:    unix.VIRTIO_NET_HDR_GSO_NONE,
-		HdrLen:     0,
-		GSOSize:    0,
-		CsumStart:  0,
-		CsumOffset: 0,
-		NumBuffers: 0,
-	}
 
-	err := t.vdev[q].TransmitPackets(hdr, b)
+	err := t.vdev[q].TransmitPackets(x)
 	if err != nil {
 		t.l.WithError(err).Error("Transmitting packet")
 		return 0, err

@@ -111,16 +111,16 @@ func (t *disabledTun) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func (t *disabledTun) WriteMany(b [][]byte, _ int) (int, error) {
-	out := 0
-	for i := range b {
-		x, err := t.Write(b[i])
-		if err != nil {
-			return out, err
-		}
-		out += x
-	}
-	return out, nil
+func (t *disabledTun) AllocSeg(pkt *packet.OutPacket, q int) (int, error) {
+	return 0, fmt.Errorf("tun_disabled: AllocSeg not implemented")
+}
+
+func (t *disabledTun) WriteOne(x *packet.OutPacket, kick bool, q int) (int, error) {
+	return 0, fmt.Errorf("tun_disabled: WriteOne not implemented")
+}
+
+func (t *disabledTun) WriteMany(x []*packet.OutPacket, q int) (int, error) {
+	return 0, fmt.Errorf("tun_disabled: WriteMany not implemented")
 }
 
 func (t *disabledTun) ReadMany(b []*packet.VirtIOPacket, _ int) (int, error) {

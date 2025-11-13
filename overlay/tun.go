@@ -17,7 +17,11 @@ const DefaultMTU = 1300
 type TunDev interface {
 	io.WriteCloser
 	ReadMany(x []*packet.VirtIOPacket, q int) (int, error)
-	WriteMany(x [][]byte, q int) (int, error)
+
+	//todo this interface sux
+	AllocSeg(pkt *packet.OutPacket, q int) (int, error)
+	WriteOne(x *packet.OutPacket, kick bool, q int) (int, error)
+	WriteMany(x []*packet.OutPacket, q int) (int, error)
 }
 
 // TODO: We may be able to remove routines
