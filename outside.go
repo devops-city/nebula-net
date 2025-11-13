@@ -421,10 +421,10 @@ func (f *Interface) readOutsidePacketsMany(packets []*packet.Packet, out []*pack
 			f.connectionManager.In(hostinfo)
 
 		}
-		//_, err := f.readers[q].WriteOne(out[i], false, q)
-		//if err != nil {
-		//	f.l.WithError(err).Error("Failed to write packet")
-		//}
+		_, err := f.readers[q].WriteOne(out[i], false, q)
+		if err != nil {
+			f.l.WithError(err).Error("Failed to write packet")
+		}
 	}
 }
 

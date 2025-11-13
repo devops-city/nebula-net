@@ -281,7 +281,6 @@ func (dev *Device) GetPacketForTx() (uint16, []byte, error) {
 }
 
 func (dev *Device) TransmitPacket(pkt *packet.OutPacket, kick bool) error {
-	//if pkt.Valid {
 	if len(pkt.SegmentIDs) == 0 {
 		return nil
 	}
@@ -294,12 +293,11 @@ func (dev *Device) TransmitPacket(pkt *packet.OutPacket, kick bool) error {
 		return fmt.Errorf("offer descriptor chains: %w", err)
 	}
 	pkt.Reset()
-	//}
-	//if kick {
-	if err := dev.TransmitQueue.Kick(); err != nil {
-		return err
+	if kick {
+		if err := dev.TransmitQueue.Kick(); err != nil {
+			return err
+		}
 	}
-	//}
 
 	return nil
 }
