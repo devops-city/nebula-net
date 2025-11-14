@@ -24,6 +24,9 @@ type StdConn struct {
 	l         *logrus.Logger
 	batch     int
 	enableGRO bool
+
+	msgs []rawMessage
+	iovs [][]iovec
 }
 
 func NewListener(l *logrus.Logger, ip netip.Addr, port int, multi bool, batch int) (Conn, error) {
@@ -63,7 +66,16 @@ func NewListener(l *logrus.Logger, ip netip.Addr, port int, multi bool, batch in
 		return nil, fmt.Errorf("unable to bind to socket: %s", err)
 	}
 
-	return &StdConn{sysFd: fd, isV4: ip.Is4(), l: l, batch: batch}, err
+	msgs := make([]rawMessage, 0, 8192) //todo configure
+	iovs := make([][]iovec, 0, len(msgs))
+	return &StdConn{
+		sysFd: fd,
+		isV4:  ip.Is4(),
+		l:     l,
+		batch: batch,
+		msgs:  msgs,
+		iovs:  iovs,
+	}, err
 }
 
 func (u *StdConn) Rebind() error {
@@ -207,8 +219,8 @@ func (u *StdConn) WriteBatch(pkts []*packet.Packet) (int, error) {
 		return 0, nil
 	}
 
-	msgs := make([]rawMessage, 0, len(pkts)) //todo recycle
-	iovs := make([][]iovec, 0, len(pkts))
+	u.msgs = u.msgs[:0]
+	u.iovs = u.iovs[:0]
 
 	sent := 0
 	const maxIovLen = 48
@@ -221,26 +233,26 @@ func (u *StdConn) WriteBatch(pkts []*packet.Packet) (int, error) {
 			continue
 		}
 		lastIdx := idx - 1
-		if mostRecentPkt != nil && pkt.CompatibleForSegmentationWith(mostRecentPkt) && msgs[lastIdx].Hdr.Iovlen < maxIovLen { //todo math this more good
+		if mostRecentPkt != nil && pkt.CompatibleForSegmentationWith(mostRecentPkt) && u.msgs[lastIdx].Hdr.Iovlen < maxIovLen { //todo math this more good
 
-			msgs[lastIdx].Hdr.Controllen = uint64(len(mostRecentPkt.Control))
-			msgs[lastIdx].Hdr.Control = &mostRecentPkt.Control[0]
-			msgs[lastIdx].Hdr.Iovlen++
-			iovs[lastIdx] = append(iovs[lastIdx], iovec{
+			u.msgs[lastIdx].Hdr.Controllen = uint64(len(mostRecentPkt.Control))
+			u.msgs[lastIdx].Hdr.Control = &mostRecentPkt.Control[0]
+			u.msgs[lastIdx].Hdr.Iovlen++
+			u.iovs[lastIdx] = append(u.iovs[lastIdx], iovec{
 				Base: &pkt.Payload[0],
 				Len:  uint64(len(pkt.Payload)),
 			})
 			mostRecentPkt.SetSegSizeForTX()
 		} else {
-			msgs = append(msgs, rawMessage{})
-			iovs = append(iovs, make([]iovec, 1, maxIovLen)) //todo
-			iovs[idx][0] = iovec{
+			u.msgs = append(u.msgs, rawMessage{})
+			u.iovs = append(u.iovs, make([]iovec, 1, maxIovLen)) //todo less garbage
+			u.iovs[idx][0] = iovec{
 				Base: &pkt.Payload[0],
 				Len:  uint64(len(pkt.Payload)),
 			}
 
-			msg := &msgs[idx]
-			iov := &iovs[idx][0]
+			msg := &u.msgs[idx]
+			iov := &u.iovs[idx][0]
 			idx++
 
 			msg.Hdr.Iov = iov
@@ -255,17 +267,17 @@ func (u *StdConn) WriteBatch(pkts []*packet.Packet) (int, error) {
 
 	}
 
-	if len(msgs) == 0 {
+	if len(u.msgs) == 0 {
 		return sent, nil
 	}
 
 	offset := 0
-	for offset < len(msgs) {
+	for offset < len(u.msgs) {
 		n, _, errno := unix.Syscall6(
 			unix.SYS_SENDMMSG,
 			uintptr(u.sysFd),
-			uintptr(unsafe.Pointer(&msgs[offset])),
-			uintptr(len(msgs)-offset),
+			uintptr(unsafe.Pointer(&u.msgs[offset])),
+			uintptr(len(u.msgs)-offset),
 			0,
 			0,
 			0,
@@ -284,7 +296,7 @@ func (u *StdConn) WriteBatch(pkts []*packet.Packet) (int, error) {
 		offset += int(n)
 	}
 
-	return sent + len(msgs), nil
+	return sent + len(u.msgs), nil
 }
 
 func (u *StdConn) encodeSockaddr(dst []byte, addr netip.AddrPort) (uint32, error) {
