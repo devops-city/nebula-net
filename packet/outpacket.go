@@ -39,7 +39,7 @@ func (pkt *OutPacket) Reset() {
 	pkt.wasSegmented = false
 }
 
-func (pkt *OutPacket) UseSegment(segID uint16, seg []byte) int {
+func (pkt *OutPacket) UseSegment(segID uint16, seg []byte, isV6 bool) int {
 	pkt.Valid = true
 	pkt.SegmentIDs = append(pkt.SegmentIDs, segID)
 	pkt.Segments = append(pkt.Segments, seg) //todo do we need this?
@@ -56,8 +56,13 @@ func (pkt *OutPacket) UseSegment(segID uint16, seg []byte) int {
 
 	hdr := seg[0 : virtio.NetHdrSize+14]
 	_ = vhdr.Encode(hdr)
-	hdr[virtio.NetHdrSize+14-2] = 0x86
-	hdr[virtio.NetHdrSize+14-1] = 0xdd //todo ipv6 ethertype
+	if isV6 {
+		hdr[virtio.NetHdrSize+14-2] = 0x86
+		hdr[virtio.NetHdrSize+14-1] = 0xdd
+	} else {
+		hdr[virtio.NetHdrSize+14-2] = 0x08
+		hdr[virtio.NetHdrSize+14-1] = 0x00
+	}
 
 	pkt.SegmentHeaders = append(pkt.SegmentHeaders, hdr)
 	pkt.SegmentPayloads = append(pkt.SegmentPayloads, seg[virtio.NetHdrSize+14:])

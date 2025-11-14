@@ -43,7 +43,8 @@ type tun struct {
 	useSystemRoutes           bool
 	useSystemRoutesBufferSize int
 
-	l *logrus.Logger
+	isV6 bool
+	l    *logrus.Logger
 }
 
 func (t *tun) Networks() []netip.Prefix {
@@ -162,6 +163,9 @@ func newTunGeneric(c *config.C, l *logrus.Logger, file *os.File, vpnNetworks []n
 		useSystemRoutes:           c.GetBool("tun.use_system_route_table", false),
 		useSystemRoutesBufferSize: c.GetInt("tun.use_system_route_table_buffer_size", 0),
 		l:                         l,
+	}
+	if len(vpnNetworks) != 0 {
+		t.isV6 = vpnNetworks[0].Addr().Is6() //todo what about multi-IP?
 	}
 
 	err := t.reload(c, true)
@@ -738,7 +742,7 @@ func (t *tun) AllocSeg(pkt *packet.OutPacket, q int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	x := pkt.UseSegment(idx, buf)
+	x := pkt.UseSegment(idx, buf, t.isV6)
 	return x, nil
 }
 
