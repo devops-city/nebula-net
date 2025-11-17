@@ -84,13 +84,19 @@ func (p *Packet) SetSegSizeForTX() {
 	binary.NativeEndian.PutUint16(p.Control[unix.CmsgLen(0):unix.CmsgLen(0)+2], uint16(p.SegSize))
 }
 
-func (p *Packet) CompatibleForSegmentationWith(otherP *Packet) bool {
+func (p *Packet) CompatibleForSegmentationWith(otherP *Packet, currentTotalSize int) bool {
 	//same dest
 	if !slices.Equal(p.Name, otherP.Name) {
 		return false
 	}
 
+	//don't get too big
+	if len(p.Payload)+currentTotalSize >= 0xffff {
+		return false
+	}
+
 	//same body len
+	//todo allow single different size at end
 	if len(p.Payload) != len(otherP.Payload) {
 		return false //todo technically you can cram one extra in
 	}
