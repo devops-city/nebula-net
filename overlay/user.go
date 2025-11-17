@@ -38,6 +38,10 @@ type UserDevice struct {
 	inboundWriter *io.PipeWriter
 }
 
+func (d *UserDevice) RecycleRxSeg(pkt *packet.VirtIOPacket, kick bool, q int) error {
+	return nil
+}
+
 func (d *UserDevice) Activate() error {
 	return nil
 }

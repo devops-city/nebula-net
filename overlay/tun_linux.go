@@ -767,3 +767,7 @@ func (t *tun) WriteMany(x []*packet.OutPacket, q int) (int, error) {
 	}
 	return maximum, nil
 }
+
+func (t *tun) RecycleRxSeg(pkt *packet.VirtIOPacket, kick bool, q int) error {
+	return t.vdev[q].ReceiveQueue.OfferDescriptorChains(pkt.Chains, kick)
+}

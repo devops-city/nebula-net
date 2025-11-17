@@ -24,6 +24,10 @@ type disabledTun struct {
 	l  *logrus.Logger
 }
 
+func (*disabledTun) RecycleRxSeg(pkt *packet.VirtIOPacket, kick bool, q int) error {
+	return nil
+}
+
 func newDisabledTun(vpnNetworks []netip.Prefix, queueLen int, metricsEnabled bool, l *logrus.Logger) *disabledTun {
 	tun := &disabledTun{
 		vpnNetworks: vpnNetworks,

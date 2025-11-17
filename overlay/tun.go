@@ -22,6 +22,7 @@ type TunDev interface {
 	AllocSeg(pkt *packet.OutPacket, q int) (int, error)
 	WriteOne(x *packet.OutPacket, kick bool, q int) (int, error)
 	WriteMany(x []*packet.OutPacket, q int) (int, error)
+	RecycleRxSeg(pkt *packet.VirtIOPacket, kick bool, q int) error
 }
 
 // TODO: We may be able to remove routines

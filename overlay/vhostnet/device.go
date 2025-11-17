@@ -354,7 +354,7 @@ func (dev *Device) processChains(pkt *packet.VirtIOPacket, chains []virtqueue.Us
 	if int(pkt.Header.NumBuffers) != 1 {
 		return 0, fmt.Errorf("too smol-brain to handle more than one chain right now: %d chains", len(chains))
 	}
-	if chains[0].Length > 4000 {
+	if chains[0].Length > 16000 {
 		//todo!
 		return 1, fmt.Errorf("too big packet length: %d", chains[0].Length)
 	}
@@ -362,7 +362,6 @@ func (dev *Device) processChains(pkt *packet.VirtIOPacket, chains []virtqueue.Us
 	//shift the buffer out of out:
 	pkt.Payload = pkt.ChainRefs[0][virtio.NetHdrSize:chains[0].Length]
 	pkt.Chains = append(pkt.Chains, uint16(chains[0].DescriptorIndex))
-	pkt.Recycler = dev.ReceiveQueue.OfferDescriptorChains
 	return 1, nil
 
 	//cursor := n - virtio.NetHdrSize

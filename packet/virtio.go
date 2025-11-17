@@ -10,7 +10,6 @@ type VirtIOPacket struct {
 	Chains    []uint16
 	ChainRefs [][]byte
 	// OfferDescriptorChains(chains []uint16, kick bool) error
-	Recycler func([]uint16, bool) error
 }
 
 func NewVIO() *VirtIOPacket {
@@ -25,17 +24,6 @@ func (v *VirtIOPacket) Reset() {
 	v.Payload = nil
 	v.ChainRefs = v.ChainRefs[:0]
 	v.Chains = v.Chains[:0]
-}
-
-func (v *VirtIOPacket) Recycle(lastOne bool) error {
-	if v.Recycler != nil {
-		err := v.Recycler(v.Chains, lastOne)
-		if err != nil {
-			return err
-		}
-	}
-	v.Reset()
-	return nil
 }
 
 type VirtIOTXPacket struct {
