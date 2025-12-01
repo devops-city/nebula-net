@@ -123,9 +123,6 @@ func NewDevice(options ...Option) (*Device, error) {
 	if err = dev.refillReceiveQueue(); err != nil {
 		return nil, fmt.Errorf("refill receive queue: %w", err)
 	}
-	if err = dev.refillTransmitQueue(); err != nil {
-		return nil, fmt.Errorf("refill receive queue: %w", err)
-	}
 
 	dev.initialized = true
 
@@ -151,22 +148,6 @@ func (dev *Device) refillReceiveQueue() error {
 			return fmt.Errorf("offer descriptor chain: %w", err)
 		}
 	}
-}
-
-func (dev *Device) refillTransmitQueue() error {
-	//for {
-	//	desc, err := dev.TransmitQueue.DescriptorTable().CreateDescriptorForOutputs()
-	//	if err != nil {
-	//		if errors.Is(err, virtqueue.ErrNotEnoughFreeDescriptors) {
-	//			// Queue is full, job is done.
-	//			return nil
-	//		}
-	//		return fmt.Errorf("offer descriptor chain: %w", err)
-	//	} else {
-	//		dev.TransmitQueue.UsedRing().InitOfferSingle(desc, 0)
-	//	}
-	//}
-	return nil
 }
 
 // Close cleans up the vhost networking device within the kernel and releases
@@ -214,14 +195,6 @@ func (dev *Device) Close() error {
 	return errors.Join(errs...)
 }
 
-// ensureInitialized is used as a guard to prevent methods to be called on an
-// uninitialized instance.
-func (dev *Device) ensureInitialized() {
-	if !dev.initialized {
-		panic("device is not initialized")
-	}
-}
-
 // createQueue creates a new virtqueue and registers it with the vhost device
 // using the given index.
 func createQueue(controlFD int, queueIndex int, queueSize int, itemSize int) (*virtqueue.SplitQueue, error) {
@@ -238,30 +211,10 @@ func createQueue(controlFD int, queueIndex int, queueSize int, itemSize int) (*v
 	return queue, nil
 }
 
-// truncateBuffers returns a new list of buffers whose combined length matches
-// exactly the specified length. When the specified length exceeds the length of
-// the buffers, this is an error. When it is smaller, the buffer list will be
-// truncated accordingly.
-func truncateBuffers(buffers [][]byte, length int) (out [][]byte) {
-	for _, buffer := range buffers {
-		if length < len(buffer) {
-			out = append(out, buffer[:length])
-			return
-		}
-		out = append(out, buffer)
-		length -= len(buffer)
-	}
-	if length > 0 {
-		panic("length exceeds the combined length of all buffers")
-	}
-	return
-}
-
 func (dev *Device) GetPacketForTx() (uint16, []byte, error) {
 	var err error
 	var idx uint16
 	if !dev.fullTable {
-
 		idx, err = dev.TransmitQueue.DescriptorTable().CreateDescriptorForOutputs()
 		if err == virtqueue.ErrNotEnoughFreeDescriptors {
 			dev.fullTable = true
@@ -393,7 +346,7 @@ func (dev *Device) ReceivePackets(out []*packet.VirtIOPacket) (int, error) {
 	//todo optimize?
 	var chains []virtqueue.UsedElement
 	var err error
-	//if len(dev.extraRx) == 0 {
+
 	chains, err = dev.ReceiveQueue.BlockAndGetHeadsCapped(context.TODO(), len(out))
 	if err != nil {
 		return 0, err
@@ -401,9 +354,6 @@ func (dev *Device) ReceivePackets(out []*packet.VirtIOPacket) (int, error) {
 	if len(chains) == 0 {
 		return 0, nil
 	}
-	//} else {
-	//	chains = dev.extraRx
-	//}
 
 	numPackets := 0
 	chainsIdx := 0
@@ -417,11 +367,6 @@ func (dev *Device) ReceivePackets(out []*packet.VirtIOPacket) (int, error) {
 		}
 		chainsIdx += numChains
 	}
-
-	// Now that we have copied all buffers, we can recycle the used descriptor chains
-	//if err = dev.ReceiveQueue.OfferDescriptorChains(chains); err != nil {
-	//	return 0, err
-	//}
 
 	return numPackets, nil
 }

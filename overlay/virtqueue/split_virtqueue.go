@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"syscall"
 
 	"github.com/slackhq/nebula/overlay/eventfd"
 	"golang.org/x/sys/unix"
@@ -186,28 +185,6 @@ func (sq *SplitQueue) startConsumeUsedRing() func() error {
 	}
 }
 
-// BlockAndGetHeads waits for the device to signal that it has used descriptor chains and returns all [UsedElement]s
-func (sq *SplitQueue) BlockAndGetHeads(ctx context.Context) ([]UsedElement, error) {
-	var n int
-	var err error
-	for ctx.Err() == nil {
-
-		// Wait for a signal from the device.
-		if n, err = sq.epoll.Block(); err != nil {
-			return nil, fmt.Errorf("wait: %w", err)
-		}
-		if n > 0 {
-			stillNeedToTake, out := sq.usedRing.take(-1)
-			sq.more = stillNeedToTake
-			if stillNeedToTake == 0 {
-				_ = sq.epoll.Clear() //???
-			}
-			return out, nil
-		}
-	}
-	return nil, ctx.Err()
-}
-
 func (sq *SplitQueue) TakeSingle(ctx context.Context) (uint16, error) {
 	var n int
 	var err error
@@ -326,53 +303,6 @@ func (sq *SplitQueue) OfferInDescriptorChains() (uint16, error) {
 	return head, nil
 }
 
-func (sq *SplitQueue) OfferOutDescriptorChains(prepend []byte, outBuffers [][]byte) ([]uint16, error) {
-	// TODO change this
-	// Each descriptor can only hold a whole memory page, so split large out
-	// buffers into multiple smaller ones.
-	outBuffers = splitBuffers(outBuffers, sq.itemSize)
-
-	chains := make([]uint16, len(outBuffers))
-
-	// Create a descriptor chain for the given buffers.
-	var (
-		head uint16
-		err  error
-	)
-	for i := range outBuffers {
-		for {
-			bufs := [][]byte{prepend, outBuffers[i]}
-			head, err = sq.descriptorTable.createDescriptorChain(bufs, 0)
-			if err == nil {
-				break
-			}
-
-			// I don't wanna use errors.Is, it's slow
-			//goland:noinspection GoDirectComparisonOfErrors
-			if err == ErrNotEnoughFreeDescriptors {
-				// Wait for more free descriptors to be put back into the queue.
-				// If the number of free descriptors is still not sufficient, we'll
-				// land here again.
-				//todo should never happen
-				syscall.Syscall(syscall.SYS_SCHED_YIELD, 0, 0, 0) // Cheap barrier
-				continue
-			}
-			return nil, fmt.Errorf("create descriptor chain: %w", err)
-		}
-		chains[i] = head
-	}
-
-	// Make the descriptor chain available to the device.
-	sq.availableRing.offer(chains)
-
-	// Notify the device to make it process the updated available ring.
-	if err := sq.kickEventFD.Kick(); err != nil {
-		return chains, fmt.Errorf("notify device: %w", err)
-	}
-
-	return chains, nil
-}
-
 // GetDescriptorChain returns the device-readable buffers (out buffers) and
 // device-writable buffers (in buffers) of the descriptor chain with the given
 // head index.
@@ -390,10 +320,6 @@ func (sq *SplitQueue) GetDescriptorChain(head uint16) (outBuffers, inBuffers [][
 func (sq *SplitQueue) GetDescriptorItem(head uint16) ([]byte, error) {
 	sq.descriptorTable.descriptors[head].length = uint32(sq.descriptorTable.itemSize)
 	return sq.descriptorTable.getDescriptorItem(head)
-}
-
-func (sq *SplitQueue) GetDescriptorChainContents(head uint16, out []byte, maxLen int) (int, error) {
-	return sq.descriptorTable.getDescriptorChainContents(head, out, maxLen)
 }
 
 func (sq *SplitQueue) GetDescriptorInbuffers(head uint16, inBuffers *[][]byte) error {
@@ -486,45 +412,10 @@ func (sq *SplitQueue) Close() error {
 	return errors.Join(errs...)
 }
 
-// ensureInitialized is used as a guard to prevent methods to be called on an
-// uninitialized instance.
-func (sq *SplitQueue) ensureInitialized() {
-	if sq.buf == nil {
-		panic("used ring is not initialized")
-	}
-}
-
 func align(index, alignment int) int {
 	remainder := index % alignment
 	if remainder == 0 {
 		return index
 	}
 	return index + alignment - remainder
-}
-
-// splitBuffers processes a list of buffers and splits each buffer that is
-// larger than the size limit into multiple smaller buffers.
-// If none of the buffers are too big though, do nothing, to avoid allocation for now
-func splitBuffers(buffers [][]byte, sizeLimit int) [][]byte {
-	for i := range buffers {
-		if len(buffers[i]) > sizeLimit {
-			return reallySplitBuffers(buffers, sizeLimit)
-		}
-	}
-	return buffers
-}
-
-func reallySplitBuffers(buffers [][]byte, sizeLimit int) [][]byte {
-	result := make([][]byte, 0, len(buffers))
-	for _, buffer := range buffers {
-		for added := 0; added < len(buffer); added += sizeLimit {
-			if len(buffer)-added <= sizeLimit {
-				result = append(result, buffer[added:])
-				break
-			}
-			result = append(result, buffer[added:added+sizeLimit])
-		}
-	}
-
-	return result
 }
